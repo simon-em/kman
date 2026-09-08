@@ -161,12 +161,28 @@ data).
   built yet, and silently deleting the old file felt like the wrong
   default to guess at without deciding it on its own merits.
 
+**Phase 5** — kranq-side: generalize tool passing. **This landed in the
+kranq repo (`/Users/effetmonstre/workspace/kranq`), not here** — kman's
+own tree is unchanged by it. kranq's `task.Spec` gained `files:` (a
+`path`/`mode`/`content`-as-base64 list, `task.MaxFileSize` capped at
+1MiB decoded), staged by a new bash block `BuildScript` emits before any
+`run:`/`claude:` step executes (`internal/task/script.go`'s
+`writeFileStaging`, committed as kranq `bff29da`). Verified with kranq's
+own test suite (`go test ./...` unaffected, new tests for `File.validate`
+and real-bash execution of the staging step) and a manual `kranq
+validate`/`render`/execute smoke test. **Not yet pushed to kranq's
+remote** — that commit exists locally on the mac mini/dev machine only;
+confirm with the operator before pushing, same as any change to a shared
+repo. This is what Phase 7's `kman-ask` MCP relay and Phase 9's declared
+skills/MCP access will build on: a flow can now carry its own tool
+implementation in the push instead of depending on what kranq happened
+to embed at build time.
+
 ## Left to do
 
-Everything from Phase 5 onward in [docs/design.md](design.md): kranq's own
-tool-passing generalization, the integrations (Bitbucket OAuth, Slack),
-meta access, cron, declared MCP/skills access, and distribution past the
-Homebrew stub.
+Everything from Phase 6 onward in [docs/design.md](design.md): the
+integrations (Bitbucket OAuth, Slack), meta access, cron, declared
+MCP/skills access, and distribution past the Homebrew stub.
 
 Two things worth flagging now, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the
