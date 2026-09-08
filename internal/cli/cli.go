@@ -32,6 +32,10 @@ func init() {
 		"push":     {"push <flow.yaml> [NAME=VALUE...] [flags]", "compile a flow and push it to kranq", runPush},
 		"mirror":   {"mirror <remote-url>", "sync a host-side cache mirror of a remote repo", runMirror},
 		"secret":   {"secret set|ls|rm ...", "manage kman's encrypted credential store", runSecret},
+		"user":     {"user set|ls ...", "manage kman users", runUser},
+		"group":    {"group set|ls|add-member|remove-member ...", "manage kman groups", runGroup},
+		"grant":    {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
+		"revoke":   {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
 		"help":     {"help [command]", "show usage", runHelp},
 	}
 }

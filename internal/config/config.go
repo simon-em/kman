@@ -6,11 +6,13 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/flow"
 )
 
 type Config struct {
-	Flows []flow.Spec
+	Flows  []flow.Spec
+	Access access.Registry
 }
 
 func Load(home, repoURL string) (Config, error) {

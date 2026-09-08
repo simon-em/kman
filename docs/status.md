@@ -68,12 +68,63 @@ any secret in the vault — there is no access model yet to gate that, which
 is expected at this phase but worth remembering before this is exposed to
 more than one operator.
 
+**Phase 3** — users, groups, Slack-identity mapping, the flow access profile:
+- `internal/access` — `User{ID, DisplayName, SlackUserID, Flows}` and
+  `Group{Name, Members, Flows}`, a `Registry` over both.
+  `Registry.CanTrigger(userID, flowName)` is true only via a direct grant on
+  the user or a grant on a group the user belongs to — zero access by
+  default, nothing inherited, nothing wildcard, matching kranq's own
+  rejection of "principals, groups, grants... roles, scopes": groups here
+  are a flat bag of users, not a hierarchy. `Registry.UserBySlackID` is the
+  one-directional lookup Phase 7's Slack integration will use to resolve an
+  inbound event to a kman user.
+- Flow schema addition `access: {tools, meta, skills, credentials, flows}`
+  (`internal/flow/access.go`) — the five dimensions the design doc named,
+  each a plain allow-list, never rendered into the kranq task-spec YAML.
+  `credentials:` (Phase 2's binding) and `access.credentials` (the grant)
+  are cross-validated at parse time: every secret name a flow binds via
+  `credentials:` must also be listed in `access.credentials`, so "this flow
+  may use this secret" is a fact `flow.Parse` can already prove today, even
+  though nothing enforces it against a live caller yet (that's Phase 6).
+- `internal/config.Config` gains `Access access.Registry`, loaded from
+  `config/users/*.yaml` and `config/groups/*.yaml` (one file per entity,
+  same convention as `config/flows/*.yaml`) and validated for referential
+  integrity on every load: a user's or group's grant must name a real flow,
+  a group's member must be a real user, and a flow's own `access.flows`
+  must name real flows too. A config directory that fails any of these
+  checks fails to load at all, on purpose — better a loud error now than a
+  grant that silently refers to nothing.
+- `kman user set|ls`, `kman group set|ls|add-member|remove-member`,
+  `kman grant <user/ID|group/NAME> <flow>`, `kman revoke ...` — CLI-only
+  for now, no live enforcement consumes `Registry.CanTrigger` yet (that
+  starts at Phase 7's Slack allow-list check). Both `grant` and `revoke`
+  refuse a flow name that doesn't exist in the current config, and
+  `group add-member` refuses a user ID that doesn't exist, so the
+  referential-integrity rule `Registry.Validate` enforces on load is also
+  enforced proactively at write time. Every write is a plain file write
+  under `$KMAN_HOME/config/{users,groups}/`, matching Phase 0's config
+  directory layout exactly — no separate store, and if that directory is
+  the checkout of a real config-repo URL, the change is a normal uncommitted
+  edit an operator commits and pushes themselves. `kman grant`/`revoke`
+  don't commit or push automatically; that's deliberately left to the
+  operator (or, later, Phase 4's web UI, which does commit every write —
+  see docs/design.md).
+
+Not yet built, on purpose: nothing yet reads `Registry.CanTrigger` in
+anger, because nothing yet triggers a flow on a user's behalf other than a
+human running `kman push` directly at a terminal, which needs no
+permission check of its own (the operator running the CLI already has
+whatever access the machine's credentials give them, same as kranq's own
+"if you can reach it, you're authorized" stance in `internal/gitsrv`'s
+model — a permission model without a caller to check it against is just
+data).
+
 ## Left to do
 
-Everything from Phase 3 onward in [docs/design.md](design.md): the access
-model, the web UI, kranq's own tool-passing generalization, the
-integrations (Bitbucket OAuth, Slack), meta access, cron, declared
-MCP/skills access, and distribution past the Homebrew stub.
+Everything from Phase 4 onward in [docs/design.md](design.md): the web UI,
+kranq's own tool-passing generalization, the integrations (Bitbucket OAuth,
+Slack), meta access, cron, declared MCP/skills access, and distribution
+past the Homebrew stub.
 
 Two things worth flagging now, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the

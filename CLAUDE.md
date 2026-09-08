@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0-2. See [docs/status.md](docs/status.md) for what's done and
+Phases 0-3. See [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
 ```sh
@@ -111,6 +111,43 @@ always do here: a non-fast-forward write is rejected and retried.
 
 **The flow schema grows one section only in the phase that enforces it.**
 No inert, unimplemented fields — see docs/design.md's phasing notes for why.
+
+**A flow's `credentials:` binding and its `access.credentials` grant are two
+different things, cross-validated at parse time.** `credentials:` (Phase 2)
+says which env var a secret fills in; `access.credentials` (Phase 3) is the
+grant that says the flow may use that secret at all. Every secret name
+bound via `credentials:` must also appear in `access.credentials`, checked
+in `flow.Spec.validate()` — but nothing outside `flow.Parse` enforces this
+against a live caller yet. `internal/flow/access.go` holds the whole
+`access:` struct (tools/meta/skills/credentials/flows), one file, since it
+grows together with the config-repo referential-integrity checks in
+`internal/config`.
+
+**`config.Load` fails the whole config if a grant or membership points at
+nothing real.** A user's or group's `flows:` grant must name a flow that
+exists; a group's `members:` must name a user that exists; a flow's own
+`access.flows` must name flows that exist. This is enforced on every load
+(`internal/config/local.go`), not just at write time — so a config repo
+that got corrupted by a hand-edit, not just a `kman grant` call, is caught
+just as loudly. `kman grant`/`group add-member` re-check the same rules
+before writing, so the common path never produces a config that would fail
+to load.
+
+**`kman grant`/`kman revoke` write local files only — they never commit or
+push.** They edit `$KMAN_HOME/config/{users,groups}/<name>.yaml` directly
+(the same directory `config.Load` reads, whether it's a plain local
+directory or the checkout of a real config-repo URL) and leave committing
+that change to the operator. Phase 4's web UI is the one that commits every
+write automatically — see docs/design.md's reasoning for why that's a web
+UI concern and not a CLI one.
+
+**`flag.FlagSet.Parse` stops at the first non-flag argument.** Every kman
+command that takes a flag after a required positional argument (`kman push
+flow.yaml --kranq-url X`, `kman user set simon --slack-id X`) goes through
+`parsePermuted` (`internal/cli/push.go`) instead of calling `fs.Parse`
+directly, or the flag is silently dropped with no error — a real bug this
+found twice already while wiring up new commands, worth checking for
+before adding a ninth.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

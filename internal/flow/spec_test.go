@@ -73,7 +73,7 @@ func TestParseRejectsRequiredWithDefault(t *testing.T) {
 }
 
 func TestParseAcceptsCredentials(t *testing.T) {
-	data := []byte("name: ok\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n")
+	data := []byte("name: ok\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\naccess:\n  credentials: [bitbucket/deploy-key]\nsteps:\n  - name: a\n    run: echo hi\n")
 	s, err := Parse(data)
 	if err != nil {
 		t.Fatal(err)
@@ -87,6 +87,32 @@ func TestParseRejectsCredentialWithEmptySecretName(t *testing.T) {
 	data := []byte("name: bad\ncredentials:\n  BITBUCKET_TOKEN: \"\"\nsteps:\n  - name: a\n    run: echo hi\n")
 	if _, err := Parse(data); err == nil {
 		t.Fatal("expected an error for a credential with no secret name")
+	}
+}
+
+func TestParseRejectsCredentialNotGrantedInAccess(t *testing.T) {
+	data := []byte("name: bad\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n")
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected an error for a credential binding not listed in access.credentials")
+	}
+}
+
+func TestParseAcceptsAccessWithNoCredentials(t *testing.T) {
+	data := []byte("name: ok\naccess:\n  tools: [bash, read]\n  meta: [cron.create]\n  skills: [team/deploy-review]\n  flows: [notify-slack]\nsteps:\n  - name: a\n    run: echo hi\n")
+	s, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Access.Tools) != 2 || len(s.Access.Meta) != 1 || len(s.Access.Skills) != 1 || len(s.Access.Flows) != 1 {
+		t.Errorf("Access = %+v", s.Access)
+	}
+}
+
+func TestParseRejectsEmptyAccessEntry(t *testing.T) {
+	data := []byte("name: bad\naccess:\n  tools: [\"\"]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for an empty access entry")
 	}
 }
 
@@ -113,8 +139,9 @@ func TestRenderProjectsToKranqShape(t *testing.T) {
 	}
 }
 
-func TestRenderExcludesCredentials(t *testing.T) {
-	s, err := Parse([]byte("name: has-creds\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n"))
+func TestRenderExcludesCredentialsAndAccess(t *testing.T) {
+	data := "name: has-creds\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\naccess:\n  credentials: [bitbucket/deploy-key]\n  tools: [bash]\nsteps:\n  - name: a\n    run: echo hi\n"
+	s, err := Parse([]byte(data))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +149,9 @@ func TestRenderExcludesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(out, "credentials:") || strings.Contains(out, "deploy-key") {
-		t.Errorf("rendered output must never contain the credentials binding, kranq doesn't know it:\n%s", out)
+	for _, forbidden := range []string{"credentials:", "deploy-key", "access:"} {
+		if strings.Contains(out, forbidden) {
+			t.Errorf("rendered output must not contain %q, kranq doesn't know it:\n%s", forbidden, out)
+		}
 	}
 }

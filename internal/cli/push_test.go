@@ -78,7 +78,7 @@ fi
 	source := newSourceRepo(t)
 
 	flowPath := filepath.Join(t.TempDir(), "flow.yaml")
-	flowYAML := "name: needs-a-credential\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n"
+	flowYAML := "name: needs-a-credential\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\naccess:\n  credentials: [bitbucket/deploy-key]\nsteps:\n  - name: a\n    run: echo hi\n"
 	if err := os.WriteFile(flowPath, []byte(flowYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestPushFailsWhenACredentialIsMissingFromTheVault(t *testing.T) {
 	source := newSourceRepo(t)
 
 	flowPath := filepath.Join(t.TempDir(), "flow.yaml")
-	flowYAML := "name: needs-a-credential\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/does-not-exist\nsteps:\n  - name: a\n    run: echo hi\n"
+	flowYAML := "name: needs-a-credential\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/does-not-exist\naccess:\n  credentials: [bitbucket/does-not-exist]\nsteps:\n  - name: a\n    run: echo hi\n"
 	if err := os.WriteFile(flowPath, []byte(flowYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}

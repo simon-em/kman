@@ -49,6 +49,7 @@ type Spec struct {
 	Args        map[string]Arg    `yaml:"args"`
 	Env         map[string]string `yaml:"env"`
 	Credentials map[string]string `yaml:"credentials"`
+	Access      Access            `yaml:"access"`
 	Steps       []Step            `yaml:"steps"`
 }
 
@@ -88,6 +89,12 @@ func (s Spec) validate() error {
 		if envName == "" || secretName == "" {
 			return fmt.Errorf("credentials: an empty env name or secret name (env=%q secret=%q)", envName, secretName)
 		}
+		if !s.Access.grants(secretName) {
+			return fmt.Errorf("credentials: %q binds secret %q, which is not listed in access.credentials", envName, secretName)
+		}
+	}
+	if err := s.Access.validate(); err != nil {
+		return err
 	}
 	for i, step := range s.Steps {
 		if err := step.validate(); err != nil {
