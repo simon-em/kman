@@ -10,8 +10,8 @@ and why.
 
 ## Where this is now
 
-Phase 0 only. See [docs/design.md](docs/design.md) for the phase-by-phase
-plan.
+Phases 0 and 1. See [docs/status.md](docs/status.md) for what's done and
+[docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
 ```sh
 go test ./...
@@ -19,6 +19,38 @@ go build -o /tmp/kman .
 ```
 
 ## Non-obvious facts
+
+**kman reimplements kranq's push wire format rather than importing it.**
+`internal/kranqpush` re-derives the push option names, the synthetic
+`refs/heads/task/<ts>-<nonce>` ref, and the `KRANQ-RESULT id=... status=...
+exit=... result=...` line kranq's post-receive hook prints — by reading
+kranq's `internal/cli/push.go` and `internal/gitsrv/options.go` and copying
+the wire format, not the code (kman cannot import kranq's Go packages; see
+the process-boundary fact below). A drift between kranq's real format and
+kman's copy of it is caught only by `internal/kranqpush`'s tests against a
+stub hook, never by the compiler — if kranq's push protocol changes, this
+package needs a matching update, and there's no automated signal that it
+does.
+
+**`kman push`'s mirror ref survives kranq's ref sweep on purpose.** Before
+every task push, `kranqpush.UpdateMirror` best-effort-pushes
+`refs/heads/mirror/<slug>` (never forced, so a non-fast-forward there is a
+loud warning, not a silent rewrite). kranq only sweeps `refs/heads/task/*`
+and `refs/heads/ok/*` (it parses a timestamp out of the ref name to decide
+what's stale) — a `mirror/` ref doesn't match that pattern, so it persists
+indefinitely as a durable object anchor. That's what keeps repeat pushes to
+the same external repo small instead of resending its whole history each
+time, without needing anything from kranq itself.
+
+**`kman push --source` defaults to `.`, on purpose, matching kranq's own
+`kranq push`.** kranq's own client just pushes whatever `HEAD` is in the
+directory you run it from ("wherever you're standing") — no separate
+clone step, because a CI pipeline has already checked the code out for
+you. kman does the same by default. The `internal/gitcache` mirror only
+comes into play when `--source` is given a remote URL instead of a local
+path (detected by `://` or `@` in the string) — that's for a caller with no
+local checkout yet, which Phase 0/1 doesn't exercise but Phase 7's
+Slack-triggered blank VM will.
 
 **kman cannot import any kranq Go package.** kranq's task schema lives under
 `internal/task`, which Go's own visibility rules make unimportable outside
