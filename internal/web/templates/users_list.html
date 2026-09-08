@@ -1,0 +1,9 @@
+{{define "users_list"}}
+<h1>Users</h1>
+<p><a href="/users/new">+ new user</a></p>
+<table border="1" cellpadding="4">
+<tr><th>ID</th><th>Display name</th><th>Slack ID</th></tr>
+{{range .Users}}<tr><td><a href="/users/{{.ID}}">{{.ID}}</a></td><td>{{.DisplayName}}</td><td>{{.SlackUserID}}</td></tr>
+{{else}}<tr><td colspan="3"><em>no users yet</em></td></tr>{{end}}
+</table>
+{{end}}

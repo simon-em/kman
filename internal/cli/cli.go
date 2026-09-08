@@ -36,6 +36,7 @@ func init() {
 		"group":    {"group set|ls|add-member|remove-member ...", "manage kman groups", runGroup},
 		"grant":    {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
 		"revoke":   {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
+		"web":      {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},
 		"help":     {"help [command]", "show usage", runHelp},
 	}
 }

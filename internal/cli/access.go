@@ -5,84 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 
-	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/exitcode"
-	"gopkg.in/yaml.v3"
 )
 
-func configDir() string {
-	return filepath.Join(kmanHome(), "config")
-}
-
-func userPath(id string) string {
-	return filepath.Join(configDir(), "users", id+".yaml")
-}
-
-func groupPath(name string) string {
-	return filepath.Join(configDir(), "groups", name+".yaml")
-}
-
-func readUser(id string) (access.User, error) {
-	data, err := os.ReadFile(userPath(id))
-	if err != nil {
-		return access.User{}, err
-	}
-	return access.ParseUser(data)
-}
-
-func writeUser(u access.User) error {
-	return atomicWriteYAML(userPath(u.ID), u)
-}
-
-func readGroup(name string) (access.Group, error) {
-	data, err := os.ReadFile(groupPath(name))
-	if err != nil {
-		return access.Group{}, err
-	}
-	return access.ParseGroup(data)
-}
-
-func writeGroup(g access.Group) error {
-	return atomicWriteYAML(groupPath(g.Name), g)
-}
-
-func atomicWriteYAML(path string, v any) error {
-	data, err := yaml.Marshal(v)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
-func listYAMLBasenames(dir string) ([]string, error) {
-	entries, err := os.ReadDir(dir)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	var names []string
-	for _, e := range entries {
-		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
-			continue
-		}
-		names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
-	}
-	sort.Strings(names)
-	return names, nil
+func actor() string {
+	return os.Getenv("KMAN_ACTOR")
 }
 
 func runUser(env Env, args []string) int {
@@ -117,7 +47,7 @@ func runUserSet(env Env, args []string) int {
 	}
 	id := positional[0]
 
-	u, err := readUser(id)
+	u, err := config.LoadUser(kmanHome(), id)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
@@ -129,7 +59,7 @@ func runUserSet(env Env, args []string) int {
 	if *slackID != "" {
 		u.SlackUserID = *slackID
 	}
-	if err := writeUser(u); err != nil {
+	if err := config.SaveUser(kmanHome(), u, actor()); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
@@ -142,7 +72,7 @@ func runUserList(env Env, args []string) int {
 		fmt.Fprintln(env.Stderr, "usage: kman user ls")
 		return exitcode.Usage
 	}
-	names, err := listYAMLBasenames(filepath.Join(configDir(), "users"))
+	names, err := config.ListUserIDs(kmanHome())
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
@@ -180,13 +110,13 @@ func runGroupSet(env Env, args []string) int {
 		return exitcode.Usage
 	}
 	name := args[0]
-	g, err := readGroup(name)
+	g, err := config.LoadGroup(kmanHome(), name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
 	g.Name = name
-	if err := writeGroup(g); err != nil {
+	if err := config.SaveGroup(kmanHome(), g, actor()); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
@@ -199,7 +129,7 @@ func runGroupList(env Env, args []string) int {
 		fmt.Fprintln(env.Stderr, "usage: kman group ls")
 		return exitcode.Usage
 	}
-	names, err := listYAMLBasenames(filepath.Join(configDir(), "groups"))
+	names, err := config.ListGroupNames(kmanHome())
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
@@ -216,19 +146,19 @@ func runGroupMember(env Env, args []string, add bool) int {
 		return exitcode.Usage
 	}
 	groupName, userID := args[0], args[1]
-	g, err := readGroup(groupName)
+	g, err := config.LoadGroup(kmanHome(), groupName)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: no such group %q; create one first with `kman group set`\n", groupName)
 		return exitcode.InvalidSpec
 	}
 	if add {
-		if _, err := readUser(userID); err != nil {
+		if _, err := config.LoadUser(kmanHome(), userID); err != nil {
 			fmt.Fprintf(env.Stderr, "kman: no such user %q; create one first with `kman user set`\n", userID)
 			return exitcode.InvalidSpec
 		}
 	}
 	g.Members = updateGrantList(g.Members, userID, add)
-	if err := writeGroup(g); err != nil {
+	if err := config.SaveGroup(kmanHome(), g, actor()); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
@@ -263,36 +193,31 @@ func applyGrant(env Env, principal, flowName string, grant bool) int {
 		return exitcode.Usage
 	}
 
-	cfg, err := config.Load(kmanHome(), "")
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InternalError
-	}
-	if !hasFlow(cfg, flowName) {
+	if _, err := config.LoadFlow(kmanHome(), flowName); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: no such flow %q\n", flowName)
 		return exitcode.InvalidSpec
 	}
 
 	switch kind {
 	case "user":
-		u, err := readUser(name)
+		u, err := config.LoadUser(kmanHome(), name)
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "kman: no such user %q; create one first with `kman user set`\n", name)
 			return exitcode.InvalidSpec
 		}
 		u.Flows = updateGrantList(u.Flows, flowName, grant)
-		if err := writeUser(u); err != nil {
+		if err := config.SaveUser(kmanHome(), u, actor()); err != nil {
 			fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 			return exitcode.InternalError
 		}
 	case "group":
-		g, err := readGroup(name)
+		g, err := config.LoadGroup(kmanHome(), name)
 		if err != nil {
 			fmt.Fprintf(env.Stderr, "kman: no such group %q; create one first with `kman group set`\n", name)
 			return exitcode.InvalidSpec
 		}
 		g.Flows = updateGrantList(g.Flows, flowName, grant)
-		if err := writeGroup(g); err != nil {
+		if err := config.SaveGroup(kmanHome(), g, actor()); err != nil {
 			fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 			return exitcode.InternalError
 		}
@@ -304,15 +229,6 @@ func applyGrant(env Env, principal, flowName string, grant bool) int {
 	}
 	fmt.Fprintf(env.Stdout, "%s: %s %s\n", principal, verb, flowName)
 	return exitcode.OK
-}
-
-func hasFlow(cfg config.Config, name string) bool {
-	for _, f := range cfg.Flows {
-		if f.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func parsePrincipal(s string) (kind, name string, err error) {

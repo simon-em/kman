@@ -10,12 +10,13 @@ exists as a separate binary from kranq rather than a feature of it.
 
 ## Where this is now
 
-Phases 0-3: CLI dispatch, the flow schema, config-repo loading (with a
+Phases 0-4: CLI dispatch, the flow schema, config-repo loading (with a
 local-directory fallback for testing), the git mechanics to push a flow at
-kranq, an encrypted secrets store a flow can bind a credential to, and
+kranq, an encrypted secrets store a flow can bind a credential to,
 users/groups/grants recording who may trigger which flow (not yet enforced
-against a live caller — that starts with Phase 7's Slack integration). See
-[docs/status.md](docs/status.md) for the phase-by-phase state.
+against a live caller — that starts with Phase 7's Slack integration), and
+a web UI over all of it. See [docs/status.md](docs/status.md) for the
+phase-by-phase state.
 
 ```sh
 kman version
@@ -34,6 +35,7 @@ kman group remove-member <group> <user-id>
 kman group ls
 kman grant <user/ID|group/NAME> <flow>
 kman revoke <user/ID|group/NAME> <flow>
+kman web [--addr 127.0.0.1:8080]        # a browser UI over flows/users/groups; every save is a git commit
 ```
 
 ## Commands

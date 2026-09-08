@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/simon-em/kman/internal/config"
 )
 
 func writeFlow(t *testing.T, home, name, content string) {
@@ -75,7 +77,7 @@ func TestGrantAndRevoke(t *testing.T) {
 		t.Fatalf("grant exit code = %d, stderr=%s", code, stderr)
 	}
 
-	u, err := readUser("simon")
+	u, err := config.LoadUser(kmanHome(), "simon")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +88,7 @@ func TestGrantAndRevoke(t *testing.T) {
 	if _, stderr, code := run("revoke", "user/simon", "deploy-review"); code != 0 {
 		t.Fatalf("revoke exit code = %d, stderr=%s", code, stderr)
 	}
-	u, err = readUser("simon")
+	u, err = config.LoadUser(kmanHome(), "simon")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +107,7 @@ func TestGrantToGroup(t *testing.T) {
 	if _, stderr, code := run("grant", "group/oncall", "run-tests"); code != 0 {
 		t.Fatalf("grant exit code = %d, stderr=%s", code, stderr)
 	}
-	g, err := readGroup("oncall")
+	g, err := config.LoadGroup(kmanHome(), "oncall")
 	if err != nil {
 		t.Fatal(err)
 	}

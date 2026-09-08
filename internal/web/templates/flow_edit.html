@@ -1,0 +1,10 @@
+{{define "flow_edit"}}
+<h1>Flow{{if .Name}}: {{.Name}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/flows/save">
+<textarea name="yaml" rows="24" cols="100">{{.YAML}}</textarea><br>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/flows">back to flows</a></p>
+{{end}}

@@ -1,0 +1,16 @@
+{{define "user_edit"}}
+<h1>User{{if not .IsNew}}: {{.User.ID}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/users/save">
+<label>ID <input type="text" name="id" value="{{.User.ID}}" {{if not .IsNew}}readonly{{end}}></label><br>
+<label>Display name <input type="text" name="display_name" value="{{.User.DisplayName}}"></label><br>
+<label>Slack user ID <input type="text" name="slack_id" value="{{.User.SlackUserID}}"></label><br>
+<fieldset><legend>May trigger</legend>
+{{range .AllFlows}}<label><input type="checkbox" name="flows" value="{{.}}" {{if index $.Granted .}}checked{{end}}> {{.}}</label><br>
+{{else}}<em>no flows defined yet</em>{{end}}
+</fieldset>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/users">back to users</a></p>
+{{end}}

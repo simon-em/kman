@@ -96,19 +96,16 @@ more than one operator.
   grant that silently refers to nothing.
 - `kman user set|ls`, `kman group set|ls|add-member|remove-member`,
   `kman grant <user/ID|group/NAME> <flow>`, `kman revoke ...` — CLI-only
-  for now, no live enforcement consumes `Registry.CanTrigger` yet (that
-  starts at Phase 7's Slack allow-list check). Both `grant` and `revoke`
-  refuse a flow name that doesn't exist in the current config, and
+  at this phase, no live enforcement consumes `Registry.CanTrigger` yet
+  (that starts at Phase 7's Slack allow-list check). Both `grant` and
+  `revoke` refuse a flow name that doesn't exist in the current config, and
   `group add-member` refuses a user ID that doesn't exist, so the
   referential-integrity rule `Registry.Validate` enforces on load is also
-  enforced proactively at write time. Every write is a plain file write
-  under `$KMAN_HOME/config/{users,groups}/`, matching Phase 0's config
-  directory layout exactly — no separate store, and if that directory is
-  the checkout of a real config-repo URL, the change is a normal uncommitted
-  edit an operator commits and pushes themselves. `kman grant`/`revoke`
-  don't commit or push automatically; that's deliberately left to the
-  operator (or, later, Phase 4's web UI, which does commit every write —
-  see docs/design.md).
+  enforced proactively at write time. **Since Phase 4** these commands
+  write through the same `config.SaveUser`/`SaveGroup` path the web UI
+  uses, so they now commit automatically too when `$KMAN_HOME/config` is a
+  git repo — see Phase 4 below; this corrects what this section originally
+  said (grant/revoke were CLI-only, uncommitted writes when Phase 3 shipped).
 
 Not yet built, on purpose: nothing yet reads `Registry.CanTrigger` in
 anger, because nothing yet triggers a flow on a user's behalf other than a
@@ -119,12 +116,57 @@ whatever access the machine's credentials give them, same as kranq's own
 model — a permission model without a caller to check it against is just
 data).
 
+**Phase 4** — the web UI:
+- `internal/config` gained a single-entity store shared by the CLI and the
+  web UI, exactly as docs/design.md called for: `LoadFlow`/`LoadUser`/
+  `LoadGroup`, `SaveFlow`/`SaveUser`/`SaveGroup`, `ListFlowNames`/
+  `ListUserIDs`/`ListGroupNames`, and `ReadFlowRaw` (the exact bytes on
+  disk, for round-trip-faithful editing — `LoadFlow` parses and would lose
+  comments/formatting if used to redisplay a flow for editing).
+  `internal/cli/access.go` was refactored to call these instead of writing
+  files directly, which is what gave `kman grant`/`user set`/`group set`
+  auto-commit for free — one save path, two front ends, per design.
+- **Every `Save*` commits when `$KMAN_HOME/config/.git` exists, and is a
+  silent no-op commit-wise otherwise.** Both are real, tested modes, not a
+  fallback: a plain directory (no git at all) is Phase 0's local-testing
+  mode; a git repo with no remote is "config alone can rebuild an
+  identical install" made real without needing a server anywhere.
+  Committer identity is always `kman <kman@kman.local>`; author identity is
+  the acting operator's name if known, `kman` if not — see the next point.
+- **No real login system, exactly as docs/design.md said there wouldn't
+  be at this phase.** There is no session, no password, no per-request
+  identity. What exists instead: a plain, unauthenticated "Acting as" text
+  field on every form, remembered across page loads via a `kman_actor`
+  cookie, used *only* to attribute the git commit's author — never checked
+  against anything, never a permission gate. It makes `git log` on the
+  config repo meaningful without pretending to be a security boundary.
+  `kman web` binds `127.0.0.1` by default for the same reason design.md
+  gave: this is not meant to be reachable beyond the operator's own
+  machine until real authentication exists.
+- **Flows are edited as raw YAML in a `<textarea>`; users and groups get
+  real form fields (text inputs, and checkboxes for grants/membership
+  built from `ListFlowNames`/`ListUserIDs`).** A flow's schema is deep
+  (steps, args, credentials, access, mcp_servers); building a structured
+  form for all of it now would be premature relative to how much the
+  schema is still growing phase to phase. `access.User`/`Group` are simple
+  enough that a structured form is strictly better UX for the same effort.
+  On a validation error, the page re-renders with exactly what was typed
+  (not the last saved version), so a mistake never costs the edit.
+- Plain `net/http` + `html/template`, stdlib only — no new dependency, no
+  JS, no CSS framework. Templates are `//go:embed`ded so `kman web` is
+  still a single static binary, same as everything else in kman.
+- **A known, documented limitation, not a bug**: saving a flow/user/group
+  under a different name than the one it was opened with creates a new
+  file rather than renaming; the old file is left behind. Renaming isn't
+  built yet, and silently deleting the old file felt like the wrong
+  default to guess at without deciding it on its own merits.
+
 ## Left to do
 
-Everything from Phase 4 onward in [docs/design.md](design.md): the web UI,
-kranq's own tool-passing generalization, the integrations (Bitbucket OAuth,
-Slack), meta access, cron, declared MCP/skills access, and distribution
-past the Homebrew stub.
+Everything from Phase 5 onward in [docs/design.md](design.md): kranq's own
+tool-passing generalization, the integrations (Bitbucket OAuth, Slack),
+meta access, cron, declared MCP/skills access, and distribution past the
+Homebrew stub.
 
 Two things worth flagging now, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the

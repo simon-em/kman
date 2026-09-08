@@ -1,0 +1,142 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/flow"
+	"gopkg.in/yaml.v3"
+)
+
+func LoadFlow(home, name string) (flow.Spec, error) {
+	data, err := ReadFlowRaw(home, name)
+	if err != nil {
+		return flow.Spec{}, err
+	}
+	return flow.Parse(data)
+}
+
+func ReadFlowRaw(home, name string) ([]byte, error) {
+	return os.ReadFile(flowPath(home, name))
+}
+
+func LoadUser(home, id string) (access.User, error) {
+	data, err := os.ReadFile(userPath(home, id))
+	if err != nil {
+		return access.User{}, err
+	}
+	return access.ParseUser(data)
+}
+
+func LoadGroup(home, name string) (access.Group, error) {
+	data, err := os.ReadFile(groupPath(home, name))
+	if err != nil {
+		return access.Group{}, err
+	}
+	return access.ParseGroup(data)
+}
+
+func SaveFlow(home string, spec flow.Spec, author string) error {
+	if err := writeYAML(flowPath(home, spec.Name), spec); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("flow %s: saved", spec.Name), author)
+}
+
+func SaveUser(home string, u access.User, author string) error {
+	if err := writeYAML(userPath(home, u.ID), u); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("user %s: saved", u.ID), author)
+}
+
+func SaveGroup(home string, g access.Group, author string) error {
+	if err := writeYAML(groupPath(home, g.Name), g); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("group %s: saved", g.Name), author)
+}
+
+func ListFlowNames(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "flows"))
+}
+
+func ListUserIDs(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "users"))
+}
+
+func ListGroupNames(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "groups"))
+}
+
+func flowPath(home, name string) string {
+	return filepath.Join(Dir(home), "flows", name+".yaml")
+}
+
+func userPath(home, id string) string {
+	return filepath.Join(Dir(home), "users", id+".yaml")
+}
+
+func groupPath(home, name string) string {
+	return filepath.Join(Dir(home), "groups", name+".yaml")
+}
+
+func listYAMLBasenames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		names = append(names, strings.TrimSuffix(e.Name(), ".yaml"))
+	}
+	sort.Strings(names)
+	return names, nil
+}
+
+func writeYAML(path string, v any) error {
+	data, err := yaml.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func commit(dir, message, author string) error {
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return nil
+	}
+	if err := runGit(dir, "add", "-A"); err != nil {
+		return err
+	}
+	authorName := author
+	if authorName == "" {
+		authorName = "kman"
+	}
+	cmd := gitCommitCmd(dir, message, authorName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if strings.Contains(string(out), "nothing to commit") {
+			return nil
+		}
+		return fmt.Errorf("git commit: %w: %s", err, out)
+	}
+	return nil
+}

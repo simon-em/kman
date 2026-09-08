@@ -15,8 +15,12 @@ type Config struct {
 	Access access.Registry
 }
 
+func Dir(home string) string {
+	return filepath.Join(home, "config")
+}
+
 func Load(home, repoURL string) (Config, error) {
-	dir := filepath.Join(home, "config")
+	dir := Dir(home)
 	if repoURL != "" {
 		if err := syncRepo(dir, repoURL); err != nil {
 			return Config{}, err
@@ -43,4 +47,16 @@ func runGit(dir string, args ...string) error {
 		return fmt.Errorf("git %v: %w: %s", args, err, out)
 	}
 	return nil
+}
+
+func gitCommitCmd(dir, message, authorName string) *exec.Cmd {
+	cmd := exec.Command("git", "commit", "-q", "-m", message)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME="+authorName,
+		"GIT_AUTHOR_EMAIL="+authorName+"@kman.local",
+		"GIT_COMMITTER_NAME=kman",
+		"GIT_COMMITTER_EMAIL=kman@kman.local",
+	)
+	return cmd
 }

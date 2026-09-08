@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0-3. See [docs/status.md](docs/status.md) for what's done and
+Phases 0-4. See [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
 ```sh
@@ -92,9 +92,10 @@ keyed by a 32-byte machine key at `$KMAN_HOME/vault.key` (0600).**
 local, file-based, machine-keyed store), not a literal dependency on the
 `age` tool. Only names, never values, go into the committed config repo —
 unlike kranq's own single-operator, plain `0600 $KRANQ_HOME/env`, because
-kman holds *other people's* long-lived credentials. There is no access
-model yet (that's Phase 3, enforced at Phase 6): any flow can currently
-bind any secret in the vault.
+kman holds *other people's* long-lived credentials. The access model
+(Phase 3) exists now, but nothing enforces it against a live caller yet
+(that starts at Phase 6/7): any flow can still bind any secret in the
+vault today, the grant is just recorded, not checked by anything.
 
 **A flow's `credentials:` block is resolved at push time and merged into
 the same env as `args:`, with a hard error on collision.** `kman push`
@@ -103,11 +104,21 @@ credential — that's a flow-authoring mistake to catch, not something to
 silently resolve one way. Like `args:`, `credentials:` is never rendered
 into the kranq task-spec YAML; kranq has no concept of either.
 
-**The web UI (Phase 4) is one more interface onto the config repo, never a
-separate store.** It reads and writes the exact same `Config` type the CLI
-uses; every save is a git commit, not a database write. Two admins editing
-the same flow resolve the conflict the way two pushes to the same branch
-always do here: a non-fast-forward write is rejected and retried.
+**The web UI is one more interface onto the config repo, never a separate
+store.** `kman web` and the CLI both call the same `internal/config`
+single-entity functions (`LoadUser`/`SaveUser`, `LoadGroup`/`SaveGroup`,
+`LoadFlow`/`SaveFlow`/`ReadFlowRaw`, `ListFlowNames`/`ListUserIDs`/
+`ListGroupNames`) — one storage format, two front ends, exactly per
+docs/design.md. `Save*` commits automatically when `$KMAN_HOME/config` is
+a git repo (checked via `.git`'s presence, not via whether a remote is
+configured) and is a plain, uncommitted file write otherwise — both are
+real supported modes, not one being a degraded fallback of the other.
+Concurrent-edit conflict handling (design.md's "non-fast-forward is
+rejected and retried") is *not* built: `internal/config`'s commit is local
+only, nothing pushes or pulls, so two `kman web` processes against the
+same directory can still race on the same file. That only becomes a real
+problem once more than one person points a browser at the same
+`$KMAN_HOME`, which isn't how this is used yet.
 
 **The flow schema grows one section only in the phase that enforces it.**
 No inert, unimplemented fields — see docs/design.md's phasing notes for why.
@@ -133,13 +144,17 @@ just as loudly. `kman grant`/`group add-member` re-check the same rules
 before writing, so the common path never produces a config that would fail
 to load.
 
-**`kman grant`/`kman revoke` write local files only — they never commit or
-push.** They edit `$KMAN_HOME/config/{users,groups}/<name>.yaml` directly
-(the same directory `config.Load` reads, whether it's a plain local
-directory or the checkout of a real config-repo URL) and leave committing
-that change to the operator. Phase 4's web UI is the one that commits every
-write automatically — see docs/design.md's reasoning for why that's a web
-UI concern and not a CLI one.
+**`kman grant`/`kman revoke`/`kman user set`/`kman group set` commit
+automatically now, same as the web UI — this superseded what Phase 3 first
+shipped.** Phase 3 had them write files directly with no commit step, on
+the reasoning that auto-commit was "a web UI concern." Phase 4 built the
+shared `config.Save*` path the design doc actually called for, and once it
+existed there was no reason for the CLI not to use it too — so it does.
+None of them push; that's still left to the operator (or a future phase).
+There's no `--as`/actor flag on the CLI side yet, only the `KMAN_ACTOR` env
+var (`internal/cli/access.go`'s `actor()`) — the web UI's per-request
+"Acting as" cookie has no CLI equivalent, since a CLI invocation has no
+concept of "this session."
 
 **`flag.FlagSet.Parse` stops at the first non-flag argument.** Every kman
 command that takes a flag after a required positional argument (`kman push
@@ -148,6 +163,20 @@ flow.yaml --kranq-url X`, `kman user set simon --slack-id X`) goes through
 directly, or the flag is silently dropped with no error — a real bug this
 found twice already while wiring up new commands, worth checking for
 before adding a ninth.
+
+**`kman web`'s "Acting as" field is attribution, never authorization.** It
+sets a `kman_actor` cookie used only to name the git commit's author; there
+is no session, password, or per-request identity check anywhere in
+`internal/web`. Anyone who can reach the port can read and write anything —
+`kman web` binds `127.0.0.1` by default specifically because of this, per
+docs/design.md's explicit call that Phase 4 would ship with no login
+system, not a placeholder for one.
+
+**A flow/user/group saved under a new name creates a second file; it does
+not rename the old one.** `internal/web`'s edit forms don't diff the
+current name against what's being saved, so renaming via the UI (or via
+`kman grant`'s target files) leaves an orphaned file behind under the old
+name. Known, not yet built — see docs/status.md's Phase 4 entry.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

@@ -1,0 +1,9 @@
+{{define "groups_list"}}
+<h1>Groups</h1>
+<p><a href="/groups/new">+ new group</a></p>
+<table border="1" cellpadding="4">
+<tr><th>Name</th><th>Members</th><th>Flows</th></tr>
+{{range .Groups}}<tr><td><a href="/groups/{{.Name}}">{{.Name}}</a></td><td>{{len .Members}}</td><td>{{len .Flows}}</td></tr>
+{{else}}<tr><td colspan="3"><em>no groups yet</em></td></tr>{{end}}
+</table>
+{{end}}

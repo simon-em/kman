@@ -1,0 +1,18 @@
+{{define "group_edit"}}
+<h1>Group{{if not .IsNew}}: {{.Group.Name}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/groups/save">
+<label>Name <input type="text" name="name" value="{{.Group.Name}}" {{if not .IsNew}}readonly{{end}}></label><br>
+<fieldset><legend>Members</legend>
+{{range .AllUsers}}<label><input type="checkbox" name="members" value="{{.}}" {{if index $.Members .}}checked{{end}}> {{.}}</label><br>
+{{else}}<em>no users defined yet</em>{{end}}
+</fieldset>
+<fieldset><legend>May trigger</legend>
+{{range .AllFlows}}<label><input type="checkbox" name="flows" value="{{.}}" {{if index $.Granted .}}checked{{end}}> {{.}}</label><br>
+{{else}}<em>no flows defined yet</em>{{end}}
+</fieldset>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/groups">back to groups</a></p>
+{{end}}
