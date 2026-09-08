@@ -3,12 +3,14 @@ package web
 import (
 	"bytes"
 	"embed"
+	"fmt"
 	"html/template"
 	"net/http"
 
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"gopkg.in/yaml.v3"
 )
 
@@ -27,7 +29,7 @@ fieldset{margin:1em 0}
 nav{margin-bottom:2em}
 </style></head>
 <body>
-<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a></nav>
+<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a> | <a href="/integrations">integrations</a></nav>
 {{.Body}}
 </body></html>`
 
@@ -36,11 +38,12 @@ var layoutTmpl = template.Must(template.New("layout").Parse(layoutHTML))
 const actorCookie = "kman_actor"
 
 type Server struct {
-	Home string
+	Home  string
+	oauth *oauthState
 }
 
 func New(home string) *Server {
-	return &Server{Home: home}
+	return &Server{Home: home, oauth: newOAuthState()}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -58,6 +61,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /groups/new", s.newGroup)
 	mux.HandleFunc("GET /groups/{name}", s.viewGroup)
 	mux.HandleFunc("POST /groups/save", s.saveGroup)
+	mux.HandleFunc("GET /integrations", s.listIntegrations)
+	mux.HandleFunc("GET /integrations/bitbucket/connect", s.bitbucketConnect)
+	mux.HandleFunc("GET /integrations/bitbucket/callback", s.bitbucketCallback)
 	return mux
 }
 
@@ -338,4 +344,81 @@ func (s *Server) saveGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/groups/"+g.Name, http.StatusSeeOther)
+}
+
+type integrationRow struct {
+	UserID    string
+	Connected bool
+}
+
+type integrationsData struct {
+	Configured bool
+	ConfigErr  string
+	Rows       []integrationRow
+	Actor      string
+}
+
+func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
+	ids, err := config.ListUserIDs(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	provider, provErr := bitbucket.FromVault(s.Home)
+	data := integrationsData{Configured: provErr == nil, Actor: actorFrom(r)}
+	if provErr != nil {
+		data.ConfigErr = provErr.Error()
+	}
+	for _, id := range ids {
+		connected := provErr == nil && provider.Connected(id)
+		data.Rows = append(data.Rows, integrationRow{UserID: id, Connected: connected})
+	}
+	render(w, "Integrations", "integrations_list", data)
+}
+
+func (s *Server) bitbucketConnect(w http.ResponseWriter, r *http.Request) {
+	userID := actorFrom(r)
+	if userID == "" {
+		http.Error(w, `set "Acting as" on any page first, to a known user id`, http.StatusBadRequest)
+		return
+	}
+	if _, err := config.LoadUser(s.Home, userID); err != nil {
+		http.Error(w, fmt.Sprintf("no such user %q; create one first at /users/new", userID), http.StatusBadRequest)
+		return
+	}
+	provider, err := bitbucket.FromVault(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusPreconditionFailed)
+		return
+	}
+	state := s.oauth.create(userID)
+	http.Redirect(w, r, provider.OAuth.AuthorizeURL(state), http.StatusSeeOther)
+}
+
+func (s *Server) bitbucketCallback(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	if reason := q.Get("error"); reason != "" {
+		http.Error(w, "bitbucket denied the request: "+reason, http.StatusBadRequest)
+		return
+	}
+	userID, ok := s.oauth.consume(q.Get("state"))
+	if !ok {
+		http.Error(w, "unknown or expired oauth state; start over from /integrations", http.StatusBadRequest)
+		return
+	}
+	provider, err := bitbucket.FromVault(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusPreconditionFailed)
+		return
+	}
+	tok, err := provider.OAuth.Exchange(r.Context(), q.Get("code"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if err := provider.Connect(userID, tok); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/integrations", http.StatusSeeOther)
 }

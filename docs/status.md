@@ -178,11 +178,66 @@ skills/MCP access will build on: a flow can now carry its own tool
 implementation in the push instead of depending on what kranq happened
 to embed at build time.
 
+**Phase 6** — the pluggable integration interface, Bitbucket OAuth first:
+- `internal/integration` — `Integration` (a `Name()` marker),
+  `CredentialProvider` (`Credential(ctx, userID) (Credential, error)`), and
+  `TriggerChannel`, deliberately left as a bare marker interface for
+  now — Slack (Phase 7) is what will actually shape its method set, and
+  guessing that shape today risked designing something Phase 7 would just
+  replace, the same "additive only in the phase that enforces it" discipline
+  already applied to the flow schema.
+- `internal/integration/bitbucket` — a real OAuth 2.0 Authorization Code
+  client against Bitbucket Cloud's actual endpoints
+  (`/site/oauth2/authorize`, `/site/oauth2/access_token`), tested against a
+  fake server via `httptest` (`oauth_test.go`) covering the authorize URL,
+  code exchange, refresh, and both error shapes (non-200, non-JSON). It has
+  never been run against the real bitbucket.org — there's no live OAuth
+  consumer registered anywhere this session could reach, and no browser to
+  click through Bitbucket's own consent screen. Everything client-side of
+  that consent screen is proven end to end, including a manual run: a real
+  `kman` binary, a real local HTTP server standing in for Bitbucket,
+  `kman web`'s actual connect → redirect → callback → token-exchange →
+  vault-storage path, verified by `kman integration bitbucket status`
+  flipping from "not connected" to "connected".
+- `Provider` stores per-user tokens in the same vault Phase 2 built,
+  namespaced `bitbucket/oauth/<user-id>/{access_token,refresh_token,
+  expires_at}` — no second secrets store. `Credential` returns the cached
+  access token if it has more than a minute of life left, otherwise
+  refreshes and re-stores before returning. The OAuth app's own client
+  credentials live at the fixed vault keys `bitbucket/oauth/client_id` /
+  `client_secret` (`kman secret set` — nothing new to build for that), plus
+  an optional `bitbucket/oauth/base_url` override for Bitbucket Server/Data
+  Center or, as it happens, a test double.
+- **`credentials:` entries now route two ways**, decided by the secret
+  name's prefix: a plain name is a vault lookup (Phase 2, unchanged); a
+  name prefixed `integration:<name>` (e.g. `integration:bitbucket`) resolves
+  through that integration's `CredentialProvider` instead, for the flow's
+  acting user. Nothing about Phase 2/3's schema or validation changed —
+  `access.credentials` still has to list it, `credentials:` still binds it
+  to an env var — only the resolution step at push time gained a branch.
+- **`kman push` gained `--as <user-id>`** (default `$KMAN_ACTOR`, the same
+  env var Phase 4 uses for commit attribution) because integration-routed
+  credentials are inherently per-person: minting "the" Bitbucket token
+  requires knowing whose. A push using an `integration:` credential with no
+  acting user known is a named, immediate error, not a silent fallback.
+- `kman integration bitbucket status [user-id...]` and a `/integrations`
+  web panel (status per known user, a "Connect Bitbucket as X" link driven
+  by the same actor-cookie convention Phase 4 established) — both read-only
+  displays over the same `Provider.Connected`, no separate view logic.
+- **Still exclusively the human/Slack path.** A CI pipeline's own
+  step-level Bitbucket token (forwarded env, today's mechanism) is
+  completely untouched; nothing in this phase changes how kranq itself
+  receives credentials from a pipeline.
+
+Not built, on purpose, per docs/design.md: Slack itself and GitHub as a
+second `CredentialProvider` (Phase 6 only had to prove the interface
+generalizes, not generalize it twice).
+
 ## Left to do
 
-Everything from Phase 6 onward in [docs/design.md](design.md): the
-integrations (Bitbucket OAuth, Slack), meta access, cron, declared
-MCP/skills access, and distribution past the Homebrew stub.
+Everything from Phase 7 onward in [docs/design.md](design.md): the Slack
+integration, meta access, cron, declared MCP/skills access, and
+distribution past the Homebrew stub.
 
 Two things worth flagging now, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the

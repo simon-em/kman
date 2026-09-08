@@ -10,7 +10,8 @@ and why.
 
 ## Where this is now
 
-Phases 0-4. See [docs/status.md](docs/status.md) for what's done and
+Phases 0-4 and 6 (Phase 5 landed in the kranq repo, not here). See
+[docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
 ```sh
@@ -93,9 +94,12 @@ local, file-based, machine-keyed store), not a literal dependency on the
 `age` tool. Only names, never values, go into the committed config repo —
 unlike kranq's own single-operator, plain `0600 $KRANQ_HOME/env`, because
 kman holds *other people's* long-lived credentials. The access model
-(Phase 3) exists now, but nothing enforces it against a live caller yet
-(that starts at Phase 6/7): any flow can still bind any secret in the
-vault today, the grant is just recorded, not checked by anything.
+(Phase 3) exists now, but `Registry.CanTrigger` still isn't consulted by
+anything live (that starts at Phase 7's Slack allow-list check): any flow
+can still bind any secret or integration credential today, the grant is
+just recorded, not checked. Per-user Bitbucket OAuth tokens (Phase 6) live
+in this same vault, namespaced `bitbucket/oauth/<user-id>/...` — no second
+secrets store for integration-minted credentials.
 
 **A flow's `credentials:` block is resolved at push time and merged into
 the same env as `args:`, with a hard error on collision.** `kman push`
@@ -151,10 +155,12 @@ the reasoning that auto-commit was "a web UI concern." Phase 4 built the
 shared `config.Save*` path the design doc actually called for, and once it
 existed there was no reason for the CLI not to use it too — so it does.
 None of them push; that's still left to the operator (or a future phase).
-There's no `--as`/actor flag on the CLI side yet, only the `KMAN_ACTOR` env
-var (`internal/cli/access.go`'s `actor()`) — the web UI's per-request
-"Acting as" cookie has no CLI equivalent, since a CLI invocation has no
-concept of "this session."
+Attribution on the CLI side is `internal/cli/access.go`'s `actor()`, which
+just reads `$KMAN_ACTOR` — there's still no CLI flag for it on those
+commands specifically, only on `kman push` (`--as`, added in Phase 6, for a
+different reason: see the integration-credential fact below). The web UI's
+per-request "Acting as" cookie has no CLI equivalent either way, since a
+CLI invocation has no concept of "this session."
 
 **`flag.FlagSet.Parse` stops at the first non-flag argument.** Every kman
 command that takes a flag after a required positional argument (`kman push
@@ -177,6 +183,36 @@ not rename the old one.** `internal/web`'s edit forms don't diff the
 current name against what's being saved, so renaming via the UI (or via
 `kman grant`'s target files) leaves an orphaned file behind under the old
 name. Known, not yet built — see docs/status.md's Phase 4 entry.
+
+**A `credentials:` secret name prefixed `integration:<name>` routes through
+that integration's `CredentialProvider` instead of the vault.** Everything
+else about it is unchanged from Phase 2/3: it still has to appear in
+`access.credentials`, it still binds to an env var name, it's still never
+rendered into kranq's YAML. Only `resolveCredentials`
+(`internal/cli/push.go`) branches on the prefix. This is why `kman push`
+gained `--as <user-id>` (default `$KMAN_ACTOR`) — minting "the" Bitbucket
+token for a push requires knowing whose, something no kman command needed
+to know before this phase. A push using an `integration:` credential with
+no acting user known fails immediately, by name, rather than guessing.
+
+**`internal/integration`'s `TriggerChannel` is intentionally an empty
+marker interface right now.** Bitbucket only needed `CredentialProvider`
+to be real; nothing yet needs `TriggerChannel` to be more than "this is an
+integration that can trigger flows" — giving it a full method set before
+Phase 7's Slack integration has an actual event to shape it against would
+mean guessing a design Phase 7 would likely just replace.
+
+**Bitbucket OAuth has been proven against a fake server, never against
+real bitbucket.org.** `internal/integration/bitbucket` is fully tested
+(`httptest`-based unit tests plus a manual `kman web` run: connect →
+redirect → callback → token exchange → vault storage → `kman integration
+bitbucket status` flipping to "connected") — but nothing in this repo or
+session has a real OAuth consumer's client_id/secret or a browser to click
+through Bitbucket's actual consent screen. `bitbucket/oauth/base_url`
+(`internal/integration/bitbucket/provider.go`) exists for exactly this:
+pointing the client at a stand-in server for tests today, and at Bitbucket
+Server/Data Center for real on-prem use later — it is not test-only
+scaffolding bolted onto production code.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

@@ -26,18 +26,19 @@ var commands map[string]Command
 
 func init() {
 	commands = map[string]Command{
-		"version":  {"version [--json]", "print the kman version", runVersion},
-		"validate": {"validate <flow.yaml>...", "check that a flow parses", runValidate},
-		"render":   {"render <flow.yaml>", "print the kranq task-spec YAML a flow projects to", runRender},
-		"push":     {"push <flow.yaml> [NAME=VALUE...] [flags]", "compile a flow and push it to kranq", runPush},
-		"mirror":   {"mirror <remote-url>", "sync a host-side cache mirror of a remote repo", runMirror},
-		"secret":   {"secret set|ls|rm ...", "manage kman's encrypted credential store", runSecret},
-		"user":     {"user set|ls ...", "manage kman users", runUser},
-		"group":    {"group set|ls|add-member|remove-member ...", "manage kman groups", runGroup},
-		"grant":    {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
-		"revoke":   {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
-		"web":      {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},
-		"help":     {"help [command]", "show usage", runHelp},
+		"version":     {"version [--json]", "print the kman version", runVersion},
+		"validate":    {"validate <flow.yaml>...", "check that a flow parses", runValidate},
+		"render":      {"render <flow.yaml>", "print the kranq task-spec YAML a flow projects to", runRender},
+		"push":        {"push <flow.yaml> [NAME=VALUE...] [flags]", "compile a flow and push it to kranq", runPush},
+		"mirror":      {"mirror <remote-url>", "sync a host-side cache mirror of a remote repo", runMirror},
+		"secret":      {"secret set|ls|rm ...", "manage kman's encrypted credential store", runSecret},
+		"user":        {"user set|ls ...", "manage kman users", runUser},
+		"group":       {"group set|ls|add-member|remove-member ...", "manage kman groups", runGroup},
+		"grant":       {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
+		"revoke":      {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
+		"web":         {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},
+		"integration": {"integration bitbucket status [user-id...]", "check integration connection status", runIntegration},
+		"help":        {"help [command]", "show usage", runHelp},
 	}
 }
 

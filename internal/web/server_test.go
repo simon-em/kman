@@ -42,14 +42,19 @@ func mustPost(t *testing.T, srv *httptest.Server, path string, form url.Values) 
 	return resp
 }
 
-func bodyContains(t *testing.T, resp *http.Response, needle string) bool {
+func readBody(t *testing.T, resp *http.Response) string {
 	t.Helper()
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.Contains(string(data), needle)
+	return string(data)
+}
+
+func bodyContains(t *testing.T, resp *http.Response, needle string) bool {
+	t.Helper()
+	return strings.Contains(readBody(t, resp), needle)
 }
 
 func TestIndexServesLinks(t *testing.T) {

@@ -7,6 +7,7 @@ const (
 	NoSuchFile    = 66
 	Unreachable   = 69
 	InternalError = 70
+	Misconfigured = 78
 )
 
 const (

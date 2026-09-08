@@ -1,0 +1,21 @@
+{{define "integrations_list"}}
+<h1>Integrations</h1>
+<h2>Bitbucket</h2>
+{{if not .Configured}}
+<p class="error">Not configured: {{.ConfigErr}}</p>
+<p>Set it up with <code>kman secret set bitbucket/oauth/client_id &lt;id&gt;</code> and
+<code>kman secret set bitbucket/oauth/client_secret &lt;secret&gt;</code>, using the values
+from an OAuth consumer registered in your Bitbucket workspace settings.</p>
+{{else}}
+{{if .Actor}}
+<p><a href="/integrations/bitbucket/connect">Connect Bitbucket as "{{.Actor}}"</a></p>
+{{else}}
+<p>Set "Acting as" on any page first (it's remembered across pages), then come back here to connect.</p>
+{{end}}
+<table border="1" cellpadding="4">
+<tr><th>User</th><th>Bitbucket</th></tr>
+{{range .Rows}}<tr><td>{{.UserID}}</td><td>{{if .Connected}}connected{{else}}not connected{{end}}</td></tr>
+{{else}}<tr><td colspan="2"><em>no users yet</em></td></tr>{{end}}
+</table>
+{{end}}
+{{end}}

@@ -24,6 +24,7 @@ func runPush(env Env, args []string) int {
 	label := fs.String("label", "", "label for the VM and artifacts")
 	keep := fs.String("keep-vm", "", "keep the job VM: never, on-failure, always")
 	detach := fs.Bool("detach", false, "queue it and return without waiting for a result")
+	asUser := fs.String("as", os.Getenv("KMAN_ACTOR"), "kman user id this push is on behalf of (default: $KMAN_ACTOR); needed for integration: credentials")
 	positional, err := parsePermuted(fs, args)
 	if err != nil {
 		return exitcode.Usage
@@ -50,7 +51,7 @@ func runPush(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InvalidSpec
 	}
-	resolvedCreds, err := resolveCredentials(spec)
+	resolvedCreds, err := resolveCredentials(spec, *asUser)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InvalidSpec
@@ -152,16 +153,28 @@ func parsePermuted(fs *flag.FlagSet, args []string) ([]string, error) {
 	return positional, nil
 }
 
-func resolveCredentials(spec flow.Spec) (map[string]string, error) {
+func resolveCredentials(spec flow.Spec, userID string) (map[string]string, error) {
 	if len(spec.Credentials) == 0 {
 		return nil, nil
 	}
-	v, err := vault.Open(kmanHome())
-	if err != nil {
-		return nil, err
-	}
+	var v *vault.Vault
 	resolved := map[string]string{}
 	for envName, secretName := range spec.Credentials {
+		if name, ok := strings.CutPrefix(secretName, "integration:"); ok {
+			value, err := resolveIntegrationCredential(name, userID)
+			if err != nil {
+				return nil, fmt.Errorf("credential %s (%s): %w", envName, secretName, err)
+			}
+			resolved[envName] = value
+			continue
+		}
+		if v == nil {
+			var err error
+			v, err = vault.Open(kmanHome())
+			if err != nil {
+				return nil, err
+			}
+		}
 		value, err := v.Get(secretName)
 		if err != nil {
 			return nil, fmt.Errorf("credential %s (%s): %w", envName, secretName, err)
