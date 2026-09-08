@@ -31,6 +31,7 @@ func init() {
 		"render":   {"render <flow.yaml>", "print the kranq task-spec YAML a flow projects to", runRender},
 		"push":     {"push <flow.yaml> [NAME=VALUE...] [flags]", "compile a flow and push it to kranq", runPush},
 		"mirror":   {"mirror <remote-url>", "sync a host-side cache mirror of a remote repo", runMirror},
+		"secret":   {"secret set|ls|rm ...", "manage kman's encrypted credential store", runSecret},
 		"help":     {"help [command]", "show usage", runHelp},
 	}
 }

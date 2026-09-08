@@ -38,13 +38,42 @@ worth doing once there's a real kranq host reachable to test against: push
 a flow at it, confirm the rendered YAML round-trips through kranq's actual
 `internal/task.Parse` without drift.
 
+**Phase 2** — the encrypted secrets store and credential binding:
+- `internal/vault` — secrets live encrypted (AES-256-GCM, stdlib only, no
+  new dependency) under `$KMAN_HOME/secrets/vault.enc`, keyed by a 32-byte
+  machine key generated on first `Open` and written to `$KMAN_HOME/vault.key`
+  at 0600. "age-style" in docs/design.md described the shape (a local,
+  file-based, machine-keyed store), not literally the `age` file format or
+  library — this is a from-scratch stdlib implementation, a deliberate
+  choice to keep kman's dependency count at zero, same as kranq's own.
+  Worth revisiting only if something outside kman ever needs to decrypt the
+  file directly (e.g. with the real `age` CLI for recovery).
+- `kman secret set <name> [value]` (value read from stdin if omitted, so it
+  never has to appear in shell history), `kman secret ls` (names only,
+  never values — verified by a test that the encrypted file on disk never
+  contains a set value or name in the clear), `kman secret rm <name>`.
+- Flow schema addition `credentials: {ENV_NAME: secret-name}` — validated
+  (no empty env name or secret name) but never rendered into the kranq
+  task-spec YAML, same as `args:`: kranq has no concept of it. At push
+  time, `kman push` resolves each binding against the vault and merges it
+  into the same env `kman push` already forwards for `args:`, refusing to
+  push if an env name is claimed by both an arg and a credential (an
+  authoring mistake, not a runtime tiebreak) or if a bound secret is
+  missing from the vault.
+
+Not yet built, on purpose (per docs/design.md's phasing): enforcement of
+*who* may bind which secret (that's Phase 3's access model, wired in at
+Phase 6) and Bitbucket OAuth minting (Phase 6). Right now any flow can bind
+any secret in the vault — there is no access model yet to gate that, which
+is expected at this phase but worth remembering before this is exposed to
+more than one operator.
+
 ## Left to do
 
-Everything from Phase 2 onward in [docs/design.md](design.md): the
-encrypted secrets vault, the access model, the web UI, kranq's own
-tool-passing generalization, the integrations (Bitbucket OAuth, Slack),
-meta access, cron, declared MCP/skills access, and distribution past the
-Homebrew stub.
+Everything from Phase 3 onward in [docs/design.md](design.md): the access
+model, the web UI, kranq's own tool-passing generalization, the
+integrations (Bitbucket OAuth, Slack), meta access, cron, declared
+MCP/skills access, and distribution past the Homebrew stub.
 
 Two things worth flagging now, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the

@@ -40,15 +40,16 @@ type Step struct {
 }
 
 type Spec struct {
-	Name      string            `yaml:"name"`
-	Repo      string            `yaml:"repo"`
-	Branch    string            `yaml:"branch"`
-	Label     string            `yaml:"label"`
-	Kranqfile string            `yaml:"kranqfile"`
-	Resources Resources         `yaml:"resources"`
-	Args      map[string]Arg    `yaml:"args"`
-	Env       map[string]string `yaml:"env"`
-	Steps     []Step            `yaml:"steps"`
+	Name        string            `yaml:"name"`
+	Repo        string            `yaml:"repo"`
+	Branch      string            `yaml:"branch"`
+	Label       string            `yaml:"label"`
+	Kranqfile   string            `yaml:"kranqfile"`
+	Resources   Resources         `yaml:"resources"`
+	Args        map[string]Arg    `yaml:"args"`
+	Env         map[string]string `yaml:"env"`
+	Credentials map[string]string `yaml:"credentials"`
+	Steps       []Step            `yaml:"steps"`
 }
 
 var validPermissionModes = map[string]bool{
@@ -81,6 +82,11 @@ func (s Spec) validate() error {
 	for argName, arg := range s.Args {
 		if arg.Required && arg.Default != "" {
 			return fmt.Errorf("arg %q: required and default are mutually exclusive", argName)
+		}
+	}
+	for envName, secretName := range s.Credentials {
+		if envName == "" || secretName == "" {
+			return fmt.Errorf("credentials: an empty env name or secret name (env=%q secret=%q)", envName, secretName)
 		}
 	}
 	for i, step := range s.Steps {

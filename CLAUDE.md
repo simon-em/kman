@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0 and 1. See [docs/status.md](docs/status.md) for what's done and
+Phases 0-2. See [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
 ```sh
@@ -85,11 +85,23 @@ declined to build ("a human triggering something from a browser, with no
 env to send... decided on its own merits"), not a reversal of kranq's "not
 a credential vault" position.
 
-**Secrets, once Phase 2 lands, live encrypted at rest under
-`$KMAN_HOME/secrets`, keyed by a machine key.** Only names, never values, go
-into the committed config repo — unlike kranq's own single-operator, plain
-`0600 $KRANQ_HOME/env`, because kman holds *other people's* long-lived
-credentials.
+**Secrets live encrypted at rest under `$KMAN_HOME/secrets/vault.enc`,
+keyed by a 32-byte machine key at `$KMAN_HOME/vault.key` (0600).**
+`internal/vault` is AES-256-GCM via the Go standard library, not the real
+`age` file format — docs/design.md's "age-style" described the shape (a
+local, file-based, machine-keyed store), not a literal dependency on the
+`age` tool. Only names, never values, go into the committed config repo —
+unlike kranq's own single-operator, plain `0600 $KRANQ_HOME/env`, because
+kman holds *other people's* long-lived credentials. There is no access
+model yet (that's Phase 3, enforced at Phase 6): any flow can currently
+bind any secret in the vault.
+
+**A flow's `credentials:` block is resolved at push time and merged into
+the same env as `args:`, with a hard error on collision.** `kman push`
+refuses to push if an env var name is claimed by both an arg and a
+credential — that's a flow-authoring mistake to catch, not something to
+silently resolve one way. Like `args:`, `credentials:` is never rendered
+into the kranq task-spec YAML; kranq has no concept of either.
 
 **The web UI (Phase 4) is one more interface onto the config repo, never a
 separate store.** It reads and writes the exact same `Config` type the CLI

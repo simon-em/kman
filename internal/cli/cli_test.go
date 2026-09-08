@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -10,6 +11,24 @@ func run(args ...string) (string, string, int) {
 	var stdout, stderr bytes.Buffer
 	code := dispatch(Env{Stdout: &stdout, Stderr: &stderr}, args)
 	return stdout.String(), stderr.String(), code
+}
+
+func dispatchWithStdin(t *testing.T, env Env, args []string, stdin string) int {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString(stdin); err != nil {
+		t.Fatal(err)
+	}
+	w.Close()
+
+	real := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = real }()
+
+	return dispatch(env, args)
 }
 
 func TestVersion(t *testing.T) {

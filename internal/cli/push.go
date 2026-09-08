@@ -12,6 +12,7 @@ import (
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/gitcache"
 	"github.com/simon-em/kman/internal/kranqpush"
+	"github.com/simon-em/kman/internal/vault"
 )
 
 func runPush(env Env, args []string) int {
@@ -23,10 +24,10 @@ func runPush(env Env, args []string) int {
 	label := fs.String("label", "", "label for the VM and artifacts")
 	keep := fs.String("keep-vm", "", "keep the job VM: never, on-failure, always")
 	detach := fs.Bool("detach", false, "queue it and return without waiting for a result")
-	if err := fs.Parse(args); err != nil {
+	positional, err := parsePermuted(fs, args)
+	if err != nil {
 		return exitcode.Usage
 	}
-	positional := fs.Args()
 	if len(positional) == 0 {
 		fmt.Fprintln(env.Stderr, "usage: kman push <flow.yaml> [NAME=VALUE...] [flags]")
 		fs.PrintDefaults()
@@ -45,6 +46,16 @@ func runPush(env Env, args []string) int {
 		return exitcode.Usage
 	}
 	resolvedArgs, err := flow.ResolveArgs(spec, provided)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
+		return exitcode.InvalidSpec
+	}
+	resolvedCreds, err := resolveCredentials(spec)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
+		return exitcode.InvalidSpec
+	}
+	pushEnv, err := mergeEnv(resolvedArgs, resolvedCreds)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InvalidSpec
@@ -85,7 +96,7 @@ func runPush(env Env, args []string) int {
 		Branch:   firstNonEmpty(*branch, spec.Branch),
 		Label:    *label,
 		Keep:     *keep,
-		Env:      resolvedArgs,
+		Env:      pushEnv,
 		Detach:   *detach,
 	})
 	if err != nil {
@@ -101,6 +112,76 @@ func runPush(env Env, args []string) int {
 		return result.ExitCode
 	}
 	return exitcode.FromTask(result.ExitCode)
+}
+
+type boolFlag interface {
+	IsBoolFlag() bool
+}
+
+func parsePermuted(fs *flag.FlagSet, args []string) ([]string, error) {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--" {
+			positional = append(positional, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(a, "-") {
+			positional = append(positional, a)
+			continue
+		}
+		flags = append(flags, a)
+		if strings.Contains(a, "=") {
+			continue
+		}
+		f := fs.Lookup(strings.TrimLeft(a, "-"))
+		if f == nil {
+			continue
+		}
+		if b, ok := f.Value.(boolFlag); ok && b.IsBoolFlag() {
+			continue
+		}
+		if i+1 < len(args) {
+			flags = append(flags, args[i+1])
+			i++
+		}
+	}
+	if err := fs.Parse(flags); err != nil {
+		return nil, err
+	}
+	return positional, nil
+}
+
+func resolveCredentials(spec flow.Spec) (map[string]string, error) {
+	if len(spec.Credentials) == 0 {
+		return nil, nil
+	}
+	v, err := vault.Open(kmanHome())
+	if err != nil {
+		return nil, err
+	}
+	resolved := map[string]string{}
+	for envName, secretName := range spec.Credentials {
+		value, err := v.Get(secretName)
+		if err != nil {
+			return nil, fmt.Errorf("credential %s (%s): %w", envName, secretName, err)
+		}
+		resolved[envName] = value
+	}
+	return resolved, nil
+}
+
+func mergeEnv(sources ...map[string]string) (map[string]string, error) {
+	merged := map[string]string{}
+	for _, source := range sources {
+		for name, value := range source {
+			if _, exists := merged[name]; exists {
+				return nil, fmt.Errorf("%q is set by more than one of the flow's args/credentials", name)
+			}
+			merged[name] = value
+		}
+	}
+	return merged, nil
 }
 
 func parseArgAssignments(args []string) (map[string]string, error) {

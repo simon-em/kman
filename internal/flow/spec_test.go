@@ -72,6 +72,24 @@ func TestParseRejectsRequiredWithDefault(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsCredentials(t *testing.T) {
+	data := []byte("name: ok\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n")
+	s, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Credentials["BITBUCKET_TOKEN"] != "bitbucket/deploy-key" {
+		t.Errorf("Credentials = %+v", s.Credentials)
+	}
+}
+
+func TestParseRejectsCredentialWithEmptySecretName(t *testing.T) {
+	data := []byte("name: bad\ncredentials:\n  BITBUCKET_TOKEN: \"\"\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a credential with no secret name")
+	}
+}
+
 func TestRenderProjectsToKranqShape(t *testing.T) {
 	data, err := os.ReadFile("testdata/flow.yaml")
 	if err != nil {
@@ -92,5 +110,19 @@ func TestRenderProjectsToKranqShape(t *testing.T) {
 	}
 	if strings.Contains(out, "args:") {
 		t.Errorf("rendered output should not contain kman's args: block, kranq doesn't know it:\n%s", out)
+	}
+}
+
+func TestRenderExcludesCredentials(t *testing.T) {
+	s, err := Parse([]byte("name: has-creds\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\nsteps:\n  - name: a\n    run: echo hi\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "credentials:") || strings.Contains(out, "deploy-key") {
+		t.Errorf("rendered output must never contain the credentials binding, kranq doesn't know it:\n%s", out)
 	}
 }
