@@ -1,0 +1,113 @@
+package cli
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"sort"
+
+	"github.com/simon-em/kman/internal/exitcode"
+)
+
+var Version = "dev"
+
+type Env struct {
+	Stdout io.Writer
+	Stderr io.Writer
+}
+
+type Command struct {
+	Usage   string
+	Summary string
+	Run     func(env Env, args []string) int
+}
+
+var commands map[string]Command
+
+func init() {
+	commands = map[string]Command{
+		"version":  {"version [--json]", "print the kman version", runVersion},
+		"validate": {"validate <flow.yaml>...", "check that a flow parses", runValidate},
+		"render":   {"render <flow.yaml>", "print the kranq task-spec YAML a flow projects to", runRender},
+		"help":     {"help [command]", "show usage", runHelp},
+	}
+}
+
+func Main(argv []string) int {
+	return dispatch(Env{Stdout: os.Stdout, Stderr: os.Stderr}, argv[1:])
+}
+
+func dispatch(env Env, args []string) int {
+	if len(args) == 0 {
+		usage(env.Stderr)
+		return exitcode.Usage
+	}
+	name := args[0]
+	if name == "-h" || name == "--help" {
+		usage(env.Stdout)
+		return exitcode.OK
+	}
+	cmd, ok := commands[name]
+	if !ok {
+		fmt.Fprintf(env.Stderr, "kman: unknown command %q\n\n", name)
+		usage(env.Stderr)
+		return exitcode.Usage
+	}
+	return cmd.Run(env, args[1:])
+}
+
+func usage(w io.Writer) {
+	fmt.Fprintf(w, "kman %s\n\nusage: kman <command> [arguments]\n\n", Version)
+	names := make([]string, 0, len(commands))
+	for name := range commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	list(w, names)
+}
+
+func list(w io.Writer, names []string) {
+	width := 0
+	for _, name := range names {
+		if n := len(commands[name].Usage); n > width {
+			width = n
+		}
+	}
+	for _, name := range names {
+		fmt.Fprintf(w, "  %-*s  %s\n", width, commands[name].Usage, commands[name].Summary)
+	}
+}
+
+func runHelp(env Env, args []string) int {
+	if len(args) == 0 {
+		usage(env.Stdout)
+		return exitcode.OK
+	}
+	cmd, ok := commands[args[0]]
+	if !ok {
+		fmt.Fprintf(env.Stderr, "kman: unknown command %q\n", args[0])
+		return exitcode.Usage
+	}
+	fmt.Fprintf(env.Stdout, "usage: kman %s\n\n%s\n", cmd.Usage, cmd.Summary)
+	return exitcode.OK
+}
+
+func runVersion(env Env, args []string) int {
+	if len(args) > 0 && args[0] == "--json" {
+		fmt.Fprintf(env.Stdout, "{\"version\":%q}\n", Version)
+		return exitcode.OK
+	}
+	fmt.Fprintln(env.Stdout, Version)
+	return exitcode.OK
+}
+
+func readFlowFile(path string) ([]byte, int, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return data, exitcode.OK, nil
+	}
+	if os.IsNotExist(err) {
+		return nil, exitcode.NoSuchFile, err
+	}
+	return nil, exitcode.InternalError, err
+}
