@@ -1,11 +1,14 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/cron"
@@ -215,6 +218,63 @@ func commit(dir, message, author string) error {
 			return nil
 		}
 		return fmt.Errorf("git commit: %w: %s", err, out)
+	}
+	return nil
+}
+
+const pushTimeout = 15 * time.Second
+
+func PushIfConfigured(home string) (bool, error) {
+	dir := Dir(home)
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		return false, nil
+	}
+	if !hasOrigin(dir) {
+		return false, nil
+	}
+	if err := pullRebase(dir); err != nil {
+		return false, fmt.Errorf("syncing before push: %w", err)
+	}
+	if err := pushOnce(dir); err == nil {
+		return true, nil
+	}
+	if err := pullRebase(dir); err != nil {
+		return false, fmt.Errorf("syncing before retry: %w", err)
+	}
+	if err := pushOnce(dir); err != nil {
+		return false, fmt.Errorf("pushing: %w", err)
+	}
+	return true, nil
+}
+
+func hasOrigin(dir string) bool {
+	cmd := exec.Command("git", "remote", "get-url", "origin")
+	cmd.Dir = dir
+	return cmd.Run() == nil
+}
+
+func pullRebase(dir string) error {
+	if err := runGitTimeout(dir, "pull", "--rebase"); err != nil {
+		abort := exec.Command("git", "rebase", "--abort")
+		abort.Dir = dir
+		abort.Run()
+		return err
+	}
+	return nil
+}
+
+func pushOnce(dir string) error {
+	return runGitTimeout(dir, "push")
+}
+
+func runGitTimeout(dir string, args ...string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git %v: %w: %s", args, err, out)
 	}
 	return nil
 }

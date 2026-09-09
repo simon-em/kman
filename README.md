@@ -48,7 +48,7 @@ kman repo ls
 kman repo rm <name>
 kman grant <user/ID|group/NAME> <flow>
 kman revoke <user/ID|group/NAME> <flow>
-kman web [--addr 127.0.0.1:8080]        # a browser UI over flows/users/groups/cron/integrations; every save is a git commit
+kman web [--addr 127.0.0.1:8080]        # a browser UI over flows/repos/users/groups/cron/integrations; every save is a git commit, pushed to the config repo's remote if it has one
 kman integration bitbucket status [user-id...]
 kman integration slack status
 kman slack serve [--addr 0.0.0.0:8081] --kranq-url <url> [--meta-url <url>] [--default-flow <name>] [--dispatch] [--dispatch-model <name>]   # the Slack events endpoint; separate from kman web on purpose
@@ -60,6 +60,24 @@ kman cron tick --kranq-url <url>        # fire whatever's due once, then exit
 kman cron serve --kranq-url <url> [--interval 1m]   # loop, calling the same tick
 kman skills ls                          # list the built-in MCP/skill catalog
 ```
+
+`kman web` is a real editor, not just flow/user/group/cron viewers: every
+field of a flow (args, env, credentials, access, files, steps) has a form
+control, with `<datalist>` suggestions drawn live from the repo registry,
+the skills catalog, and the vault's own secret names — writing a flow's
+YAML by hand is for the rare case the form doesn't cover (a step's own
+`mcp_servers:`; use `access.skills:` instead, which the form does cover).
+Repeatable sections (args, steps, files, ...) show existing entries plus
+a few blank rows to fill in; save and reopen for more.
+
+Whenever `$KMAN_HOME/config` is a git repo with an `origin` remote, every
+save — from the CLI or the web UI — pushes to it automatically, pulling
+first (`git pull --rebase`, correctly handling the ordinary case of two
+admins each having committed locally before syncing) and retrying once on
+a rejected push. No remote configured is not an error; the local-only and
+local-git-no-remote modes work exactly as before. A push failure never
+fails the save itself — the local commit already happened — it only
+surfaces a warning (stderr on the CLI, a banner in the web UI).
 
 To use Bitbucket OAuth, register an OAuth consumer in your Bitbucket
 workspace settings, then:

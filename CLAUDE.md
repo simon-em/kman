@@ -131,12 +131,25 @@ docs/design.md. `Save*` commits automatically when `$KMAN_HOME/config` is
 a git repo (checked via `.git`'s presence, not via whether a remote is
 configured) and is a plain, uncommitted file write otherwise — both are
 real supported modes, not one being a degraded fallback of the other.
-Concurrent-edit conflict handling (design.md's "non-fast-forward is
-rejected and retried") is *not* built: `internal/config`'s commit is local
-only, nothing pushes or pulls, so two `kman web` processes against the
-same directory can still race on the same file. That only becomes a real
-problem once more than one person points a browser at the same
-`$KMAN_HOME`, which isn't how this is used yet.
+
+**Every save now pushes to `origin`, if one is configured — `config.
+PushIfConfigured`, called from both the CLI (`pushConfigOrWarn` at every
+mutating command) and the web UI (`redirectSaved`).** This is what
+design.md's "non-fast-forward is rejected and retried" actually became:
+`git pull --rebase` then `git push`, one retry after another pull if the
+push is rejected. Rebase, deliberately, not `--ff-only` — a save is
+already a local commit before any push is attempted, so the *common* case
+here is real divergence (two admins each committing locally before
+syncing), not just "the remote moved and I haven't looked yet"; `--ff-only`
+refuses that outright, confirmed by a test that used it first and failed.
+A push failure never fails the save — the local commit already happened
+and stands regardless — it only surfaces a warning (CLI: stderr; web: a
+`?push_warning=` redirect param, since a POST-redirect-GET response has no
+other way to carry one to the next page). This still doesn't solve two
+`kman web` processes racing on the *same local file* before either one
+commits — that race is about `$KMAN_HOME/config` on one machine, and
+pushing to a remote doesn't touch it. It does close the actual gap named
+here before: kman's config had no way to reach a shared remote at all.
 
 **The flow schema grows one section only in the phase that enforces it.**
 No inert, unimplemented fields — see docs/design.md's phasing notes for why.
@@ -670,3 +683,31 @@ behavior (same tests, same signature) — it's now built on top of the
 same two functions `Handler.route` calls directly, so an explicit
 `run <flow>` always wins over dispatch without a second, drifting copy
 of that parsing logic.
+
+**The structured flow editor's repeatable sections (args, env,
+credentials, files, steps, the access lists) render existing rows plus a
+fixed number of blank spares, with no JavaScript at all.**
+`internal/web/flowform.go`'s `withSpares` just appends `N` zero-value
+rows in Go before rendering; each section carries a hidden `_count`
+input, and `formCount`/`parseArgs`/`parseKV`/`parseList`/`parseFiles`/
+`parseSteps` read exactly that many indexed fields back out on submit,
+dropping any row whose identifying field is blank. Needing more than 3
+new rows (2 for steps) in one sitting means saving and reopening for more
+spares — a deliberate tradeoff over building real client-side add/remove,
+consistent with docs/design.md's "plain server-rendered HTML is almost
+certainly sufficient at this scale."
+
+**A step's `mcp_servers:` is the one `flow.Step` field the structured
+editor does not expose, on purpose.** Every other field of `flow.Spec`
+has a form control. `access.skills:` is how a real flow is meant to wire
+up an MCP server (`skills.Compose` builds the `mcp_servers:` block from
+it) — hand-authoring one directly is the rare, advanced path this exists
+to make usually unnecessary, and a step can have several, each with its
+own args/env, which would need a doubly-nested repeatable block for a
+case the schema itself was built to make uncommon.
+
+**`flow.PermissionModes` is the single source of truth for valid
+`permission_mode` values — the web form's `<select>` and `flow.Parse`'s
+own validation both read it, so they cannot drift.** `validPermissionModes`
+(the lookup map `flow.Parse` actually checks against) is now derived from
+`PermissionModes` at package-init time, not a second hand-maintained list.

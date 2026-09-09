@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -30,6 +31,39 @@ func initGitConfigRepo(t *testing.T, home string) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
+}
+
+func mustRunGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+func initGitConfigRepoWithOrigin(t *testing.T) (home, originDir string) {
+	t.Helper()
+	originDir = t.TempDir()
+	mustRunGit(t, originDir, "init", "-q", "--bare")
+
+	home = t.TempDir()
+	dir := Dir(home)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, dir, "init", "-q")
+	mustRunGit(t, dir, "remote", "add", "origin", originDir)
+	if err := os.WriteFile(filepath.Join(dir, ".gitkeep"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, dir, "add", "-A")
+	cmd := gitCommitCmd(dir, "initial", "kman")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	mustRunGit(t, dir, "push", "-u", "origin", "HEAD")
+	return home, originDir
 }
 
 func TestSaveUserRoundTrip(t *testing.T) {
@@ -244,5 +278,96 @@ func TestSaveWithNoChangeIsANoOpCommit(t *testing.T) {
 	log := gitLog(t, Dir(home))
 	if len(strings.Split(strings.TrimSpace(log), "\n")) != 1 {
 		t.Errorf("git log = %q, want exactly one commit (the second save changed nothing)", log)
+	}
+}
+
+func TestPushIfConfiguredIsANoOpWithNoGitRepo(t *testing.T) {
+	home := t.TempDir()
+	pushed, err := PushIfConfigured(home)
+	if err != nil || pushed {
+		t.Errorf("pushed=%v err=%v, want false, nil", pushed, err)
+	}
+}
+
+func TestPushIfConfiguredIsANoOpWithNoRemote(t *testing.T) {
+	home := t.TempDir()
+	initGitConfigRepo(t, home)
+	if err := SaveUser(home, access.User{ID: "simon"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := PushIfConfigured(home)
+	if err != nil || pushed {
+		t.Errorf("pushed=%v err=%v, want false, nil", pushed, err)
+	}
+}
+
+func TestPushIfConfiguredPushesWhenARemoteExists(t *testing.T) {
+	home, origin := initGitConfigRepoWithOrigin(t)
+	if err := SaveUser(home, access.User{ID: "simon"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	pushed, err := PushIfConfigured(home)
+	if err != nil {
+		t.Fatalf("PushIfConfigured: %v", err)
+	}
+	if !pushed {
+		t.Fatal("want pushed = true")
+	}
+	log := gitLog(t, origin)
+	if !strings.Contains(log, "user simon: saved") {
+		t.Errorf("origin log = %q, want the save's commit", log)
+	}
+}
+
+func TestPushIfConfiguredPullsRemoteChangesFirst(t *testing.T) {
+	home, origin := initGitConfigRepoWithOrigin(t)
+
+	other := t.TempDir()
+	mustRunGit(t, filepath.Dir(other), "clone", "-q", origin, other)
+	if err := os.WriteFile(filepath.Join(other, "from-other.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, other, "add", "-A")
+	otherCommit := gitCommitCmd(other, "someone else's change", "kman")
+	if out, err := otherCommit.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v: %s", err, out)
+	}
+	mustRunGit(t, other, "push")
+
+	if err := SaveUser(home, access.User{ID: "simon"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	pushed, err := PushIfConfigured(home)
+	if err != nil {
+		t.Fatalf("PushIfConfigured: %v", err)
+	}
+	if !pushed {
+		t.Fatal("want pushed = true")
+	}
+
+	log := gitLog(t, origin)
+	if !strings.Contains(log, "someone else's change") || !strings.Contains(log, "user simon: saved") {
+		t.Errorf("origin log = %q, want both commits present", log)
+	}
+	if _, err := os.Stat(filepath.Join(Dir(home), "from-other.txt")); err != nil {
+		t.Errorf("local config dir should have pulled the other change too: %v", err)
+	}
+}
+
+func TestPushIfConfiguredSurfacesAnErrorWhenTheRemoteIsUnreachable(t *testing.T) {
+	home := t.TempDir()
+	dir := Dir(home)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustRunGit(t, dir, "init", "-q")
+	mustRunGit(t, dir, "remote", "add", "origin", "/no/such/path/on/disk.git")
+	if err := SaveUser(home, access.User{ID: "simon"}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := PushIfConfigured(home); err == nil {
+		t.Fatal("expected an error for an unreachable remote")
 	}
 }

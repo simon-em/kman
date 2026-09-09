@@ -1,0 +1,12 @@
+{{define "repo_edit"}}
+<h1>Repo{{if not .IsNew}}: {{.Repo.Name}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/repos/save">
+<input type="hidden" name="is_new" value="{{if .IsNew}}true{{else}}false{{end}}">
+<label>Name <input type="text" name="name" value="{{.Repo.Name}}" {{if not .IsNew}}readonly{{end}} placeholder="dx"></label>
+<label>URL <input type="text" name="url" value="{{.Repo.URL}}" placeholder="https://bitbucket.org/workspace/repo.git"></label>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/repos">back to repos</a></p>
+{{end}}

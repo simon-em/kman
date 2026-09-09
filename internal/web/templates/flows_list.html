@@ -1,7 +1,9 @@
 {{define "flows_list"}}
 <h1>Flows</h1>
 <p><a href="/flows/new">+ new flow</a></p>
-<ul>
-{{range .Names}}<li><a href="/flows/{{.}}">{{.}}</a></li>{{else}}<li><em>no flows yet</em></li>{{end}}
-</ul>
+<table>
+<tr><th>Name</th><th>Description</th></tr>
+{{range .Rows}}<tr><td><a href="/flows/{{.Name}}">{{.Name}}</a></td><td>{{.Description}}</td></tr>
+{{else}}<tr><td colspan="2"><em>no flows yet</em></td></tr>{{end}}
+</table>
 {{end}}

@@ -74,14 +74,15 @@ type Spec struct {
 	Steps       []Step            `yaml:"steps"`
 }
 
-var validPermissionModes = map[string]bool{
-	"acceptEdits":       true,
-	"auto":              true,
-	"bypassPermissions": true,
-	"manual":            true,
-	"dontAsk":           true,
-	"plan":              true,
-}
+var PermissionModes = []string{"acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan"}
+
+var validPermissionModes = func() map[string]bool {
+	m := make(map[string]bool, len(PermissionModes))
+	for _, v := range PermissionModes {
+		m[v] = true
+	}
+	return m
+}()
 
 func Parse(data []byte) (Spec, error) {
 	var s Spec

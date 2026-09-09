@@ -73,6 +73,7 @@ func runCronSet(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: set\n", name)
 	return exitcode.OK
 }
@@ -107,6 +108,7 @@ func runCronRemove(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: removed\n", args[0])
 	return exitcode.OK
 }

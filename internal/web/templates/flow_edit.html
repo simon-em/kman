@@ -1,10 +1,129 @@
 {{define "flow_edit"}}
-<h1>Flow{{if .Name}}: {{.Name}}{{else}} (new){{end}}</h1>
+<h1>Flow{{if not .IsNew}}: {{.Name}}{{else}} (new){{end}}</h1>
 {{if .Error}}<p class="error">{{.Error}}</p>{{end}}
 <form method="post" action="/flows/save">
-<textarea name="yaml" rows="24" cols="100">{{.YAML}}</textarea><br>
+<input type="hidden" name="is_new" value="{{if .IsNew}}true{{else}}false{{end}}">
+
+<label>Name <input type="text" name="name" value="{{.Name}}" {{if not .IsNew}}readonly{{end}} placeholder="create-feature"></label>
+<label>Description <input type="text" name="description" value="{{.Description}}" placeholder="what this flow does, shown to Slack dispatch and the flows list"></label>
+<label>Repo <input type="text" name="repo" value="{{.Repo}}" list="repo-urls" placeholder="a default repo URL; a run/dispatch REPO= can still override it">
+<datalist id="repo-urls">{{range .AllRepos}}<option value="{{.URL}}">{{.Name}}</option>{{end}}</datalist>
+</label>
+<label>Branch <input type="text" name="branch" value="{{.Branch}}" placeholder="main"></label>
+<label>Kranqfile path <input type="text" name="kranqfile" value="{{.Kranqfile}}" placeholder="leave blank for the repo's own Kranqfile"></label>
+
+<fieldset><legend>Resources <span class="hint">leave blank to use kranq's defaults</span></legend>
+<div class="row">
+<input type="text" name="memory" value="{{.Memory}}" placeholder="memory, e.g. 4GiB">
+<input type="number" name="cpus" value="{{.CPUs}}" placeholder="cpus">
+<input type="text" name="disk" value="{{.Disk}}" placeholder="disk, e.g. 20GiB">
+</div>
+</fieldset>
+
+<fieldset><legend>Args <span class="hint">what a push (or Slack) can supply, e.g. TASK</span></legend>
+<input type="hidden" name="arg_count" value="{{len .Args}}">
+{{range $i, $row := .Args}}<div class="row">
+<input type="text" name="arg_name_{{$i}}" value="{{$row.Name}}" placeholder="NAME">
+<input type="text" name="arg_default_{{$i}}" value="{{$row.Default}}" placeholder="default (optional)">
+<input type="text" name="arg_description_{{$i}}" value="{{$row.Description}}" placeholder="description">
+<label class="inline"><input type="checkbox" name="arg_required_{{$i}}" {{if $row.Required}}checked{{end}}> required</label>
+</div>{{end}}
+</fieldset>
+
+<fieldset><legend>Env <span class="hint">static environment variables, always set</span></legend>
+<input type="hidden" name="env_count" value="{{len .Env}}">
+{{range $i, $row := .Env}}<div class="row">
+<input type="text" name="env_name_{{$i}}" value="{{$row.Name}}" placeholder="NAME">
+<input type="text" name="env_value_{{$i}}" value="{{$row.Value}}" placeholder="value">
+</div>{{end}}
+</fieldset>
+
+<fieldset><legend>Credentials <span class="hint">env var name &rarr; a vault secret name, or integration:bitbucket[:scope]</span></legend>
+<input type="hidden" name="cred_count" value="{{len .Credentials}}">
+{{range $i, $row := .Credentials}}<div class="row">
+<input type="text" name="cred_name_{{$i}}" value="{{$row.Name}}" placeholder="BITBUCKET_TOKEN">
+<input type="text" name="cred_value_{{$i}}" value="{{$row.Value}}" list="secret-refs" placeholder="secret name or integration:bitbucket...">
+</div>{{end}}
+</fieldset>
+
+<fieldset><legend>Access</legend>
+<label>Meta capabilities</label>
+<label class="inline"><input type="checkbox" name="meta_ask" {{if .AccessMetaAsk}}checked{{end}}> ask (AskUserQuestion relayed over Slack)</label>
+<label class="inline"><input type="checkbox" name="meta_cron_create" {{if .AccessMetaCronCreate}}checked{{end}}> cron.create (the flow can schedule itself)</label>
+
+<fieldset><legend>Skills <span class="hint">catalog:NAME@ref, or local:.claude/skills/...</span></legend>
+<input type="hidden" name="skill_count" value="{{len .AccessSkills}}">
+{{range $i, $v := .AccessSkills}}<div class="row"><input type="text" name="skill_{{$i}}" value="{{$v}}" list="skill-refs"></div>{{end}}
+</fieldset>
+
+<fieldset><legend>Credential access <span class="hint">what this flow's own credentials: block is allowed to bind to</span></legend>
+<input type="hidden" name="access_cred_count" value="{{len .AccessCredentials}}">
+{{range $i, $v := .AccessCredentials}}<div class="row"><input type="text" name="access_cred_{{$i}}" value="{{$v}}" list="secret-refs"></div>{{end}}
+</fieldset>
+
+<fieldset><legend>Flows <span class="hint">other flows this one may trigger (declared only; no cross-flow triggering exists yet)</span></legend>
+{{range .AllFlows}}<label class="inline"><input type="checkbox" name="access_flow" value="{{.}}" {{if index $.AccessFlows .}}checked{{end}}> {{.}}</label>{{else}}<em>no other flows defined yet</em>{{end}}
+</fieldset>
+
+<fieldset><legend>Tools <span class="hint">declared only; no consumer reads this yet</span></legend>
+<input type="hidden" name="tool_count" value="{{len .AccessTools}}">
+{{range $i, $v := .AccessTools}}<div class="row"><input type="text" name="tool_{{$i}}" value="{{$v}}"></div>{{end}}
+</fieldset>
+</fieldset>
+
+<fieldset><legend>Files <span class="hint">staged into the VM before any step runs; plain text only here, no base64</span></legend>
+<input type="hidden" name="file_count" value="{{len .Files}}">
+{{range $i, $row := .Files}}<fieldset>
+<div class="row">
+<input type="text" name="file_path_{{$i}}" value="{{$row.Path}}" placeholder="path in the checkout, e.g. .claude/skills/my-thing/SKILL.md">
+<input type="text" name="file_mode_{{$i}}" value="{{$row.Mode}}" placeholder="mode, e.g. 0644 or 0755">
+</div>
+<textarea name="file_text_{{$i}}" rows="4" placeholder="file content">{{$row.Text}}</textarea>
+</fieldset>{{end}}
+</fieldset>
+
+<fieldset><legend>Steps</legend>
+<input type="hidden" name="step_count" value="{{len .Steps}}">
+{{range $i, $row := .Steps}}<fieldset>
+<div class="row">
+<input type="text" name="step_name_{{$i}}" value="{{$row.Name}}" placeholder="step name">
+<select name="step_type_{{$i}}">
+<option value="run" {{if eq $row.Type "run"}}selected{{end}}>run (shell)</option>
+<option value="claude" {{if eq $row.Type "claude"}}selected{{end}}>claude (prompt)</option>
+</select>
+</div>
+<textarea name="step_body_{{$i}}" rows="6" placeholder="shell script, or the claude prompt">{{$row.Body}}</textarea>
+<div class="row">
+<input type="text" name="step_allowed_{{$i}}" value="{{$row.AllowedTools}}" placeholder="allowed tools, space separated">
+<input type="text" name="step_disallowed_{{$i}}" value="{{$row.DisallowedTools}}" placeholder="disallowed tools, space separated">
+</div>
+<div class="row">
+<input type="number" name="step_max_turns_{{$i}}" value="{{$row.MaxTurns}}" placeholder="max turns">
+<input type="text" name="step_effort_{{$i}}" value="{{$row.Effort}}" list="effort-levels" placeholder="effort">
+<input type="text" name="step_model_{{$i}}" value="{{$row.Model}}" placeholder="model (optional)">
+<select name="step_permission_mode_{{$i}}">
+<option value="" {{if eq $row.PermissionMode ""}}selected{{end}}>(default)</option>
+{{range $.PermissionModes}}<option value="{{.}}" {{if eq $row.PermissionMode .}}selected{{end}}>{{.}}</option>{{end}}
+</select>
+<label class="inline"><input type="checkbox" name="step_continue_{{$i}}" {{if $row.ContinueOnError}}checked{{end}}> continue on error</label>
+</div>
+</fieldset>{{end}}
+</fieldset>
+
+<datalist id="secret-refs">
+<option value="integration:bitbucket">
+<option value="integration:bitbucket:repository:write pullrequest:write">
+{{range .AllSecrets}}<option value="{{.}}">{{end}}
+</datalist>
+<datalist id="skill-refs">
+{{range .AllSkills}}<option value="catalog:{{.Name}}@{{.Ref}}">{{.Description}}</option>{{end}}
+</datalist>
+<datalist id="effort-levels">
+<option value="low"><option value="medium"><option value="high"><option value="xhigh"><option value="max">
+</datalist>
+
 <label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
 <button type="submit">Save</button>
 </form>
-<p><a href="/flows">back to flows</a> | <a href="/skills">browse the skills catalog</a> for <code>access.skills:</code> references</p>
+<p><a href="/flows">back to flows</a> | <a href="/skills">browse the skills catalog</a></p>
 {{end}}

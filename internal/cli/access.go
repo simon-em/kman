@@ -63,6 +63,7 @@ func runUserSet(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: set\n", id)
 	return exitcode.OK
 }
@@ -120,6 +121,7 @@ func runGroupSet(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: set\n", name)
 	return exitcode.OK
 }
@@ -162,6 +164,7 @@ func runGroupMember(env Env, args []string, add bool) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	verb := "added to"
 	if !add {
 		verb = "removed from"
@@ -223,6 +226,7 @@ func applyGrant(env Env, principal, flowName string, grant bool) int {
 		}
 	}
 
+	pushConfigOrWarn(env, kmanHome())
 	verb := "granted"
 	if !grant {
 		verb = "revoked"

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/simon-em/kman/internal/config"
+	"github.com/simon-em/kman/internal/flow"
 )
 
 func newTestServer(t *testing.T) (*httptest.Server, string) {
@@ -79,12 +80,21 @@ func TestFlowsListEmpty(t *testing.T) {
 	}
 }
 
+func minimalFlowForm(name string) url.Values {
+	return url.Values{
+		"is_new":      {"true"},
+		"name":        {name},
+		"step_count":  {"1"},
+		"step_name_0": {"a"},
+		"step_type_0": {"run"},
+		"step_body_0": {"echo hi"},
+	}
+}
+
 func TestSaveFlowThenViewIt(t *testing.T) {
 	srv, home := newTestServer(t)
 
-	resp := mustPost(t, srv, "/flows/save", url.Values{
-		"yaml": {"name: deploy-review\nsteps:\n  - name: a\n    run: echo hi\n"},
-	})
+	resp := mustPost(t, srv, "/flows/save", minimalFlowForm("deploy-review"))
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
@@ -99,17 +109,21 @@ func TestSaveFlowThenViewIt(t *testing.T) {
 	if spec.Name != "deploy-review" {
 		t.Errorf("Name = %q", spec.Name)
 	}
+	if len(spec.Steps) != 1 || spec.Steps[0].Run != "echo hi" {
+		t.Errorf("Steps = %+v", spec.Steps)
+	}
 
 	view := mustGet(t, srv, "/flows/deploy-review")
-	if !bodyContains(t, view, "run: echo hi") {
-		t.Error("expected the flow's YAML to appear in the edit form")
+	if !bodyContains(t, view, "echo hi") {
+		t.Error("expected the flow's step body to appear in the edit form")
 	}
 }
 
-func TestSaveFlowWithInvalidYAMLShowsError(t *testing.T) {
+func TestSaveFlowWithNoStepsShowsError(t *testing.T) {
 	srv, _ := newTestServer(t)
 	resp := mustPost(t, srv, "/flows/save", url.Values{
-		"yaml": {"steps: []\n"},
+		"is_new": {"true"},
+		"name":   {"empty-flow"},
 	})
 	if resp.StatusCode != 200 {
 		t.Fatalf("status = %d, want 200 with the error re-rendered", resp.StatusCode)
@@ -130,9 +144,9 @@ func TestViewMissingFlowIs404(t *testing.T) {
 func TestSaveUserThenGrantAFlow(t *testing.T) {
 	srv, home := newTestServer(t)
 
-	mustPost(t, srv, "/flows/save", url.Values{
-		"yaml": {"name: deploy-review\nsteps:\n  - name: a\n    run: echo hi\n"},
-	})
+	if err := config.SaveFlow(home, flow.Spec{Name: "deploy-review", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	resp := mustPost(t, srv, "/users/save", url.Values{
 		"id":           {"simon"},
@@ -171,9 +185,9 @@ func TestSaveUserWithNoIDShowsError(t *testing.T) {
 func TestSaveGroupWithMembersAndGrant(t *testing.T) {
 	srv, home := newTestServer(t)
 
-	mustPost(t, srv, "/flows/save", url.Values{
-		"yaml": {"name: run-tests\nsteps:\n  - name: a\n    run: echo hi\n"},
-	})
+	if err := config.SaveFlow(home, flow.Spec{Name: "run-tests", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}, ""); err != nil {
+		t.Fatal(err)
+	}
 	mustPost(t, srv, "/users/save", url.Values{"id": {"alex"}})
 
 	resp := mustPost(t, srv, "/groups/save", url.Values{

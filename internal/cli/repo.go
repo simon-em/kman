@@ -44,6 +44,7 @@ func runRepoSet(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: set\n", name)
 	return exitcode.OK
 }
@@ -78,6 +79,7 @@ func runRepoRemove(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError
 	}
+	pushConfigOrWarn(env, kmanHome())
 	fmt.Fprintf(env.Stdout, "%s: removed\n", name)
 	return exitcode.OK
 }

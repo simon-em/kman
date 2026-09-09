@@ -143,15 +143,48 @@ data).
   `kman web` binds `127.0.0.1` by default for the same reason design.md
   gave: this is not meant to be reachable beyond the operator's own
   machine until real authentication exists.
-- **Flows are edited as raw YAML in a `<textarea>`; users and groups get
-  real form fields (text inputs, and checkboxes for grants/membership
-  built from `ListFlowNames`/`ListUserIDs`).** A flow's schema is deep
-  (steps, args, credentials, access, mcp_servers); building a structured
-  form for all of it now would be premature relative to how much the
-  schema is still growing phase to phase. `access.User`/`Group` are simple
-  enough that a structured form is strictly better UX for the same effort.
-  On a validation error, the page re-renders with exactly what was typed
-  (not the last saved version), so a mistake never costs the edit.
+- **Flows were originally edited as raw YAML in a `<textarea>`; since
+  replaced with a real structured form covering every field of
+  `flow.Spec` except per-step `mcp_servers:`** (name, description, repo,
+  branch, kranqfile, resources, args, env, credentials, access — tools,
+  meta as two checkboxes for the only two real capabilities, skills with
+  a `<datalist>` from `catalog.List()`, credentials with a `<datalist>`
+  from the vault's own secret names plus common `integration:bitbucket`
+  patterns, flows as checkboxes — files as plain text, steps with a
+  run/claude type toggle). Per-step `mcp_servers:` is the one deliberate
+  exception: real flows compose MCP servers through `access.skills:`
+  instead (`skills.Compose`), so hand-authoring one directly is genuinely
+  rare, and building a doubly-nested repeatable form for it wasn't worth
+  it relative to that. Repeatable sections (args, env, credentials,
+  files, steps, the access lists) render existing rows plus a fixed
+  number of blank spares (`internal/web/flowform.go`'s `withSpares`) —
+  no JS, no framework, matching the stated "plain server-rendered HTML is
+  enough at this scale" position; needing more than 3 (or 2, for steps)
+  new rows in one sitting means saving and reopening for more spares, an
+  accepted, deliberate tradeoff over building real client-side row
+  add/remove. `access.User`/`Group` keep their existing real form fields,
+  unchanged. On a validation error, the page re-renders with exactly what
+  was submitted (not the last saved version), so a mistake never costs
+  the edit — true of the structured form exactly as it was of the
+  textarea.
+- **Every save now pushes to the config repo's `origin` remote, if one is
+  configured, from both the CLI and the web UI — `config.PushIfConfigured`,
+  called after every `Save*`/`Remove*`.** "If configured" is a real check
+  (`git remote get-url origin`), not an assumption: no git repo, or a git
+  repo with no remote, is a silent no-op, exactly kman's existing
+  local-testing and single-machine-no-remote modes, both left unchanged
+  on purpose. When a remote does exist, the sync is `git pull --rebase`
+  (never `--ff-only`, which correctly refuses the *common* case here — two
+  admins each committing locally before syncing — not just a rare edge
+  case, since every save is already a local commit before any push is
+  attempted) then `git push`, retried once after another pull if the push
+  is rejected, with the rebase aborted on failure so a conflict never
+  leaves the local repo mid-rebase. A push failure never fails the save
+  itself: the local commit already happened and stands regardless, a
+  warning is what's surfaced (CLI: stderr; web: a banner via a
+  `?push_warning=` redirect param, since a POST-redirect-GET response
+  can't carry it any other way). Bounded by a 15s timeout
+  (`context.WithTimeout`) so an unreachable remote can't hang a save.
 - Plain `net/http` + `html/template`, stdlib only — no new dependency, no
   JS, no CSS framework. Templates are `//go:embed`ded so `kman web` is
   still a single static binary, same as everything else in kman.
@@ -514,11 +547,11 @@ Not built, on purpose, per docs/design.md: skills/MCP catalogs (Phase 9).
   copy-pasteable `catalog:<name>@<ref>` reference) and `kman skills ls`
   for the CLI-only path — read-only in both cases, since the catalog is
   compiled into the binary, not config-repo content; nothing to save.
-  Deliberately not a structured picker wired into flow editing itself:
-  `flow_edit.html`'s textarea *is* the flow's YAML, unlike the
-  user/group/cron forms, and turning that into a structured editor was
-  judged out of scope for what this phase asked for (a reference list, a
-  link from the flow editor to it).
+  At the time, not wired into a structured picker in flow editing itself
+  (the flow editor was still a YAML textarea then) — just a reference
+  list plus a link from the flow editor to it. **Since superseded**: the
+  flow editor is now structured, and its skills field is exactly that
+  picker, a `<datalist>` sourced live from `catalog.List()`.
 - `access.flows` (cross-flow access) and `access.tools` remain declared
   and referential-integrity-checked only, **not** further enforced by this
   phase, despite docs/design.md's "this is the phase where all five access

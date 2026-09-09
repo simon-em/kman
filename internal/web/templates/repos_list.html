@@ -1,0 +1,10 @@
+{{define "repos_list"}}
+<h1>Repos</h1>
+<p class="hint">Named source repos a flow's <code>repo:</code>, an explicit <code>REPO=</code> push argument, or Slack dispatch can target by name instead of a full URL.</p>
+<p><a href="/repos/new">+ new repo</a></p>
+<table>
+<tr><th>Name</th><th>URL</th></tr>
+{{range .Repos}}<tr><td><a href="/repos/{{.Name}}">{{.Name}}</a></td><td>{{.URL}}</td></tr>
+{{else}}<tr><td colspan="2"><em>no repos registered yet</em></td></tr>{{end}}
+</table>
+{{end}}
