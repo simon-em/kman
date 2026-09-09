@@ -459,6 +459,21 @@ mechanism for `access.flows` to gate, and inventing one on a guess risked
 building the wrong shape. Left as a named, tracked gap (docs/status.md)
 rather than guessed at.
 
+**The Slack trigger path (`@mention` → push → threaded reply) has now
+been proven against a real Slack workspace, not just a fake
+`slack.com/api` server.** A real app (bot token, signing secret,
+`app_mentions:read`/`chat:write`/`channels:history` scopes), a real
+`kman slack serve` exposed through an `ngrok` tunnel so Slack's own
+servers could reach it, a real signed `url_verification` challenge, and
+a real `@Kman run hello` mention in an actual channel, all confirmed
+working unmodified: signature check, event parse, Slack-ID-to-`User`
+resolution, `CanTrigger`, command parse, a real push, two threaded
+replies. No drift found between Slack's real Events API payload shape
+and `ParseEnvelope`/`Event`. The AskUserQuestion relay specifically is
+still unproven inside a real kranq VM (needs a real kranq host and a
+real Slack app at the same time, which this session still doesn't have
+both of at once).
+
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —
 rewrite it instead.

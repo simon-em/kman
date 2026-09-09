@@ -723,12 +723,20 @@ Worth flagging about Phase 8, before it's forgotten:
   how this is meant to be run, but nothing currently stops it.
 
 Worth flagging about Phase 7, before it's forgotten:
-- **Never tested against real Slack.** Every piece proven so far is a fake
-  HTTP server standing in for `slack.com/api` — there's no real Slack app,
-  bot token, or signing secret in this environment. The signature scheme
-  and Events API shapes are implemented from Slack's published docs, not
-  verified against Slack's actual servers. Worth a real app before
-  depending on this.
+- **Since proven against a real Slack workspace**, not just a fake
+  `slack.com/api` server. The maintainer created a real Slack app (bot
+  token, signing secret, `app_mentions:read`/`chat:write`/
+  `channels:history` scopes) and exposed a real `kman slack serve` through
+  an `ngrok` tunnel so Slack's own servers could reach it. Confirmed live,
+  unmodified: the Request URL's `url_verification` challenge (Slack's real
+  signed request, kman's real `VerifySignature` and challenge-echo, no
+  synthetic payload); and a real `@mention` — `@Kman run hello` — in an
+  actual channel triggering the full path (signature check → event parse
+  → Slack-ID-to-`User` resolution → `CanTrigger` → command parse → a real
+  push through a fake kranq → two threaded replies, "running hello..."
+  then the actual `KRANQ-RESULT`-derived line) exactly as designed, with
+  no drift between Slack's real Events API payload shape and what kman's
+  `ParseEnvelope`/`Event` expected.
 - **The AskUserQuestion relay has never run inside an actual kranq VM.**
   `kman-ask.py`'s JSON-RPC handshake and its `tools/call` error path are
   exercised directly (`python3 internal/integration/slack/assets/
