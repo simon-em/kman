@@ -46,10 +46,12 @@ Read `.title`, `.state`, `.author.display_name`, `.source.branch.name`,
 ## Get the diff
 
 ```sh
-curl -s -H "$AUTH" "$API/pullrequests/$PR/diff"
+curl -sL -H "$AUTH" "$API/pullrequests/$PR/diff"
 ```
 
-This returns a plain unified diff, not JSON. It can be large; if you only need
+This endpoint redirects (HTTP 302) to the actual diff content, so `-L` is
+required; without it, curl silently returns nothing instead of an error. The
+response is a plain unified diff, not JSON. It can be large; if you only need
 a summary, prefer the pull request's own `.description` first.
 
 ## List existing comments

@@ -188,15 +188,20 @@ to embed at build time.
   client against Bitbucket Cloud's actual endpoints
   (`/site/oauth2/authorize`, `/site/oauth2/access_token`), tested against a
   fake server via `httptest` (`oauth_test.go`) covering the authorize URL,
-  code exchange, refresh, and both error shapes (non-200, non-JSON). It has
-  never been run against the real bitbucket.org — there's no live OAuth
-  consumer registered anywhere this session could reach, and no browser to
-  click through Bitbucket's own consent screen. Everything client-side of
-  that consent screen is proven end to end, including a manual run: a real
-  `kman` binary, a real local HTTP server standing in for Bitbucket,
-  `kman web`'s actual connect → redirect → callback → token-exchange →
-  vault-storage path, verified by `kman integration bitbucket status`
-  flipping from "not connected" to "connected".
+  code exchange, refresh, and both error shapes (non-200, non-JSON).
+  **Since proven against real bitbucket.org too**, later, once the
+  maintainer supplied a real OAuth consumer (workspace `smntlbt`) and
+  clicked through the real consent screen: `kman web`'s connect →
+  redirect → real login/approve → callback → `Exchange` → vault storage
+  path, and `Provider.Credential` handing back a token that authenticated
+  a real `GET /2.0/user` call, all unmodified kman code. One real
+  configuration snag surfaced and got fixed in the process: the OAuth
+  consumer's registered Callback URL has to match kman's actual route
+  (`/integrations/bitbucket/callback`, not a bare `/callback`) or
+  Bitbucket 404s after a real login — a Bitbucket app misconfiguration,
+  not a kman bug, but only discoverable by actually clicking through.
+  `Refresh` is still proven only against the fake server; nothing waited
+  out the real refresh token's multi-hour lifetime to exercise it live.
 - `Provider` stores per-user tokens in the same vault Phase 2 built,
   namespaced `bitbucket/oauth/<user-id>/{access_token,refresh_token,
   expires_at}` — no second secrets store. `Credential` returns the cached
@@ -597,6 +602,17 @@ whether or not that made sense. Fixed:
   directly (no base64 anywhere in the authored YAML) validating,
   rendering with correctly-encoded `content:`, and pushing successfully
   through a real fake-kranq repo.
+- **The `bitbucket.md` skill's own instructions were then run for real**,
+  against the maintainer's real `smntlbt` Bitbucket workspace, using a
+  client-credentials token (the OAuth app has that grant type enabled
+  too, no browser needed): list open PRs, get one PR, list comments, and
+  add a comment (posted for real, with explicit approval — a live
+  comment on a real pull request) all worked exactly as documented. "Get
+  the diff" did not: the endpoint 302-redirects, and the documented
+  `curl` command had no `-L`, so it silently returned nothing instead of
+  erroring. Fixed in `bitbucket.md` directly — a bug a fake test server
+  had no way to surface, since it never had a reason to redirect
+  anything.
 
 ## Left to do
 

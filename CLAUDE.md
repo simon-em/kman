@@ -206,17 +206,25 @@ calls through the interface — the Slack handler is concrete, calling
 the interface to something a second one could plug into is a decision to
 make when there's a second one, not before.
 
-**Bitbucket OAuth has been proven against a fake server, never against
-real bitbucket.org.** `internal/integration/bitbucket` is fully tested
-(`httptest`-based unit tests plus a manual `kman web` run: connect →
-redirect → callback → token exchange → vault storage → `kman integration
-bitbucket status` flipping to "connected") — but nothing in this repo or
-session has a real OAuth consumer's client_id/secret or a browser to click
-through Bitbucket's actual consent screen. `bitbucket/oauth/base_url`
-(`internal/integration/bitbucket/provider.go`) exists for exactly this:
-pointing the client at a stand-in server for tests today, and at Bitbucket
-Server/Data Center for real on-prem use later — it is not test-only
-scaffolding bolted onto production code.
+**Bitbucket OAuth has now been proven against real bitbucket.org, not just
+a fake server.** The maintainer supplied a real OAuth consumer (workspace
+`smntlbt`) and clicked through the real consent screen once. That
+confirmed, live, unmodified: `OAuth.AuthorizeURL`'s output is byte-for-byte
+what Bitbucket's own "Authorization URL" field shows; the full
+connect → redirect → real login/approve → callback → `Exchange` → vault
+storage loop; and `Provider.Credential` handing back a real per-user token
+that authenticated a real `GET /2.0/user` call. One real snag, since
+fixed: the OAuth consumer's registered Callback URL has to be
+`http://localhost:8080/integrations/bitbucket/callback`, kman's actual
+route, not a bare `/callback` — Bitbucket redirects wherever the app is
+configured to, regardless of what kman listens on, so a mismatched
+consumer config 404s after a real login, not a kman bug. `bitbucket/oauth/
+base_url` (`internal/integration/bitbucket/provider.go`) still exists for
+Bitbucket Server/Data Center and as a test-server override; it just also
+turned out to matter for nothing in the real-bitbucket.org path, since
+that path uses the default. `Refresh` is still only proven against the
+fake server (the real refresh_token has a multi-hour lifetime, nothing in
+this session waited that out).
 
 **`internal/trigger` exists because `kman push` and the Slack handler need
 byte-identical arg/credential resolution and push semantics.** It used to
@@ -356,6 +364,18 @@ an `mcp_servers:` entry for `KindMCP`; `KindDoc` is staged via
 `.md` is treated as `KindDoc` (no mode requirement, no MCP wiring),
 anything else is treated as an executable (must be `0755`-style,
 `command` set to its own path).
+
+**`bitbucket.md`'s "get the diff" curl command needs `-L`.** Found by
+running the skill's own documented commands against the real API
+(workspace `smntlbt`): `GET .../pullrequests/{id}/diff` returns an HTTP
+302 to the actual diff content, and `curl` without `-L` silently returns
+an empty body instead of erroring — nothing about it looks like a
+failure. The original Python `bitbucket-mcp.py` never hit this because
+`urllib.request.urlopen` follows redirects by default; writing the same
+call as raw `curl` in a markdown skill surfaced a real gap a fake test
+server never would have, since the fake server had no reason to redirect
+anything. Every other endpoint in the skill (list PRs, get one PR, list
+comments, add a comment) needed no such fix, confirmed live.
 
 **`internal/skills.Compose` takes a `Lookup` function parameter
 (`func(name string) (catalog.Entry, bool)`) instead of calling
