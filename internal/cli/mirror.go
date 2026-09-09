@@ -15,7 +15,7 @@ func runMirror(env Env, args []string) int {
 		fmt.Fprintln(env.Stderr, "usage: kman mirror <remote-url>")
 		return exitcode.Usage
 	}
-	dir, err := gitcache.Sync(context.Background(), kmanHome(), args[0])
+	dir, err := gitcache.Sync(context.Background(), kmanHome(), args[0], "")
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.InternalError

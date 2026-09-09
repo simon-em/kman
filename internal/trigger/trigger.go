@@ -2,7 +2,9 @@ package trigger
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -230,9 +232,25 @@ func writeTempTask(content string) (string, error) {
 
 func resolveSource(ctx context.Context, home, source string) (string, error) {
 	if LooksLikeRemote(source) {
-		return gitcache.Sync(ctx, home, source)
+		return gitcache.Sync(ctx, home, source, sourceAuthHeader(home, source))
 	}
 	return gitDirOf(source)
+}
+
+func sourceAuthHeader(home, source string) string {
+	u, err := url.Parse(source)
+	if err != nil || u.Host != "bitbucket.org" {
+		return ""
+	}
+	provider, err := bitbucket.FromVault(home)
+	if err != nil {
+		return ""
+	}
+	cred, err := provider.ScopedCredential(context.Background(), "repository")
+	if err != nil {
+		return ""
+	}
+	return "Basic " + base64.StdEncoding.EncodeToString([]byte("x-token-auth:"+cred.Value))
 }
 
 func LooksLikeRemote(s string) bool {

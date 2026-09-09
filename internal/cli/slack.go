@@ -24,6 +24,11 @@ func runSlackServe(env Env, args []string) int {
 	addr := fs.String("addr", "0.0.0.0:8081", "address to listen on; this endpoint is meant to be reachable from Slack")
 	kranqURL := fs.String("kranq-url", os.Getenv("KMAN_KRANQ_URL"), "the kranq remote to push to (default: $KMAN_KRANQ_URL)")
 	metaURL := fs.String("meta-url", os.Getenv("KMAN_META_URL"), "the kman meta endpoint the VM can reach (default: $KMAN_META_URL); needed by a flow with access.meta")
+	defaultFlowEnv := os.Getenv("KMAN_DEFAULT_FLOW")
+	if defaultFlowEnv == "" {
+		defaultFlowEnv = "create-feature"
+	}
+	defaultFlow := fs.String("default-flow", defaultFlowEnv, "flow to run for a mention that isn't \"run <flow>\", the mention text becomes its TASK argument (empty disables this)")
 	if err := fs.Parse(args); err != nil {
 		return exitcode.Usage
 	}
@@ -37,7 +42,7 @@ func runSlackServe(env Env, args []string) int {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("POST /slack/events", slack.NewHandler(kmanHome(), *kranqURL, *metaURL))
+	mux.Handle("POST /slack/events", slack.NewHandler(kmanHome(), *kranqURL, *metaURL, *defaultFlow))
 	fmt.Fprintf(env.Stdout, "kman slack serve listening on http://%s/slack/events\n", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)

@@ -40,14 +40,20 @@ func (e Event) ThreadAnchor() string {
 
 var mentionPattern = regexp.MustCompile(`^\s*<@[A-Z0-9]+>\s*`)
 
-func ParseCommand(text string) (flowName string, args []string, err error) {
-	text = mentionPattern.ReplaceAllString(text, "")
-	fields := strings.Fields(text)
-	if len(fields) == 0 || fields[0] != "run" {
-		return "", nil, fmt.Errorf(`say "run <flow> [NAME=VALUE...]"`)
+func ParseCommand(text, defaultFlow string) (flowName string, args []string, err error) {
+	stripped := strings.TrimSpace(mentionPattern.ReplaceAllString(text, ""))
+	if stripped == "" {
+		return "", nil, fmt.Errorf(`say "run <flow> [NAME=VALUE...]" or describe what you want done`)
 	}
-	if len(fields) < 2 {
-		return "", nil, fmt.Errorf("no flow name given")
+	fields := strings.Fields(stripped)
+	if fields[0] == "run" {
+		if len(fields) < 2 {
+			return "", nil, fmt.Errorf("no flow name given")
+		}
+		return fields[1], fields[2:], nil
 	}
-	return fields[1], fields[2:], nil
+	if defaultFlow == "" {
+		return "", nil, fmt.Errorf(`say "run <flow> [NAME=VALUE...]"; no default flow is configured for free-form requests`)
+	}
+	return defaultFlow, []string{"TASK=" + stripped}, nil
 }

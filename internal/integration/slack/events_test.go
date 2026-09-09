@@ -44,7 +44,7 @@ func TestThreadAnchorFallsBackToTS(t *testing.T) {
 }
 
 func TestParseCommandStripsMentionAndParsesArgs(t *testing.T) {
-	flowName, args, err := ParseCommand("<@U0BOT123> run deploy-review ENV=staging FORCE=true")
+	flowName, args, err := ParseCommand("<@U0BOT123> run deploy-review ENV=staging FORCE=true", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,14 +56,56 @@ func TestParseCommandStripsMentionAndParsesArgs(t *testing.T) {
 	}
 }
 
-func TestParseCommandRejectsAnythingButRun(t *testing.T) {
-	if _, _, err := ParseCommand("<@U0BOT123> status"); err == nil {
-		t.Fatal("expected an error for a non-run command")
+func TestParseCommandRejectsRunWithNoFlowName(t *testing.T) {
+	if _, _, err := ParseCommand("<@U0BOT123> run", ""); err == nil {
+		t.Fatal("expected an error for run with no flow name")
 	}
 }
 
-func TestParseCommandRejectsRunWithNoFlowName(t *testing.T) {
-	if _, _, err := ParseCommand("<@U0BOT123> run"); err == nil {
-		t.Fatal("expected an error for run with no flow name")
+func TestParseCommandRejectsFreeFormTextWithNoDefaultFlowConfigured(t *testing.T) {
+	if _, _, err := ParseCommand("<@U0BOT123> add a TEST.md file", ""); err == nil {
+		t.Fatal("expected an error when no default flow is configured")
+	}
+}
+
+func TestParseCommandRejectsEmptyText(t *testing.T) {
+	if _, _, err := ParseCommand("<@U0BOT123>   ", "create-feature"); err == nil {
+		t.Fatal("expected an error for a mention with no text at all")
+	}
+}
+
+func TestParseCommandFallsBackToTheDefaultFlowForFreeFormText(t *testing.T) {
+	flowName, args, err := ParseCommand("<@U0BOT123> add a TEST.md file to kman-demo", "create-feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flowName != "create-feature" {
+		t.Errorf("flowName = %q, want create-feature", flowName)
+	}
+	if len(args) != 1 || args[0] != "TASK=add a TEST.md file to kman-demo" {
+		t.Errorf("args = %v", args)
+	}
+}
+
+func TestParseCommandFallbackPreservesEqualsSignsInTheTask(t *testing.T) {
+	_, args, err := ParseCommand("<@U0BOT123> set x=y in the config", "create-feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(args) != 1 || args[0] != "TASK=set x=y in the config" {
+		t.Errorf("args = %v, want the whole task preserved including its own =", args)
+	}
+}
+
+func TestParseCommandStillPrefersAnExplicitRunEvenWithADefaultFlowConfigured(t *testing.T) {
+	flowName, args, err := ParseCommand("<@U0BOT123> run deploy-review ENV=staging", "create-feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if flowName != "deploy-review" {
+		t.Errorf("flowName = %q, want deploy-review (explicit run should win over the default)", flowName)
+	}
+	if len(args) != 1 || args[0] != "ENV=staging" {
+		t.Errorf("args = %v", args)
 	}
 }

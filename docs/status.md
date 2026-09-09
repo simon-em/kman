@@ -669,11 +669,109 @@ something kman could narrow per flow.
   independently re-verified exactly like the mechanism test above: reads
   worked, a delete outside the granted scope got a real `403`.
 
+**Free-form Slack routing and a real project setup** — raised directly by
+the maintainer: "given my slack access the initial blank vm instance
+should be able to select flows to run based on any prompt... a flow
+Create feature already set, such that if i say i want to add a TEST.md
+file to x project it should know what to do." Delivered as the simplest
+version of that which is actually buildable today (kman still has no
+flow-to-flow dispatch mechanism — Phase 8's meta capability is
+deliberately self-referential only, and `access.flows` is still
+declared-only, see above): any Slack mention that isn't `run <flow>`
+falls back to one configurable default flow, the whole message becoming
+that flow's `TASK` argument.
+- `slack.ParseCommand(text, defaultFlow)` — an explicit `run <flow>`
+  still always wins; free-form text only falls back when that doesn't
+  match. `Handler.DefaultFlow`, `kman slack serve --default-flow`
+  (`$KMAN_DEFAULT_FLOW`, defaults to `create-feature`; empty disables the
+  fallback). `CanTrigger` gates the *resolved* flow exactly as before —
+  free-form routing changes how the flow name is picked, not whether the
+  Slack user is authorized to run it.
+- A real, permanent target project: `smntlbt/kman-demo`, created live via
+  the Bitbucket API (client_credentials, `repository:admin` scope) and
+  seeded with an initial commit so it has a `main` branch. A real
+  `create-feature.yaml` flow now lives in a real, persistent
+  `$KMAN_HOME` (`~/.kman`, git-initialized, not a scratch dir this time):
+  a single `claude:` step with `access.skills: [catalog:bitbucket@...]`
+  and `credentials: BITBUCKET_TOKEN: "integration:bitbucket:repository:write
+  pullrequest:write"`, instructed to branch, make the requested change,
+  push, and open a real PR.
+- **Found and fixed live**: a `claude:` step's prompt text cannot
+  reference `$TASK` directly — kranq heredocs the prompt with a
+  single-quoted delimiter, which disables shell expansion inside it, so
+  `$TASK` reaches Claude as the literal two characters, not the task
+  description. The working pattern, now in `create-feature.yaml`: tell
+  Claude to read it itself at runtime via its own Bash tool
+  (`` `echo "$TASK"` ``), which works, since that invocation is a real,
+  unquoted shell call Claude makes after the prompt is already delivered.
+- **Found and fixed live, a second time**: `kman push`ing `create-feature`
+  against the real (private) `kman-demo` repo failed outright — not from
+  anything inside the VM, but from kman's *own* host-side "mirror the
+  source repo before pushing to kranq" step, which had no credential
+  mechanism at all and assumed ambient git access an unattended `kman
+  slack serve` daemon doesn't have. Fixed properly rather than papered
+  over (the maintainer explicitly declined the quick fix of making the
+  repo public): `internal/gitcache.Sync` now takes an `authHeader`,
+  injected via `-c http.extraHeader=...` so the credential never persists
+  into the mirror's own `.git/config` the way a `user:token@host` URL
+  would; `trigger.sourceAuthHeader` auto-mints a `repository`-scoped
+  (Bitbucket's read scope) Bitbucket credential whenever the source is a
+  `bitbucket.org` URL and Bitbucket is configured, no flow YAML involved,
+  deliberately separate from and narrower than whatever a flow's own
+  `credentials:` requests for VM-side use.
+- **Found and fixed live, a third time, inside the second fix**: the
+  first version used `Authorization: Bearer <token>`, which Bitbucket's
+  REST API accepts but its git-over-HTTPS endpoint flatly does not —
+  confirmed by testing directly against `.git/info/refs?service=git-
+  upload-pack` (Bearer: `401`; Basic `x-token-auth:<token>`: `200`).
+  `sourceAuthHeader` builds `Authorization: Basic
+  base64("x-token-auth:<token>")` instead. This failure mode is
+  deceptively silent: the header genuinely gets sent, git just reports a
+  plain `fatal: Authentication failed` with nothing pointing at "wrong
+  auth scheme" specifically — worth remembering before assuming Bearer
+  works for git operations against Bitbucket just because it works for
+  the REST API.
+- Verified with `go test ./... -race`: `ParseCommand`'s explicit-`run`
+  precedence over the default, equals-signs surviving intact in a
+  free-form task (reusing `strings.Cut`'s first-split-only behavior, no
+  new parsing path), rejection when no default is configured; a
+  handler-level test capturing the real `TASK` push-option env value a
+  free-form mention produces; `gitcache.buildArgs`'s header injection
+  (both the pure function and, via a fake-`git`-wrapper-on-`PATH` test,
+  the *actual* invocation kman makes); `sourceAuthHeader` correctly
+  scoping to non-bitbucket hosts (no-op) and to Bitbucket (real `Basic`
+  header, real `repository` scope requested). Plus a full real run,
+  twice (once failing correctly, once succeeding after the fix): a real
+  free-form Slack mention with no `run` prefix, routed to `create-feature`
+  with no explicit flow name given, `kman` correctly cloning the real
+  private `kman-demo` repo using its own freshly-minted credential, and
+  pushing through to a (still-fake, no real kranq host available)
+  downstream.
+
 ## Left to do
 
 Everything from Phase 10 onward in [docs/design.md](design.md):
 distribution past the Homebrew stub, and the written note on further
 kranq-side cleanup.
+
+Worth flagging about the free-form Slack routing work, before it's
+forgotten:
+- **`create-feature` has never actually run Claude Code inside a real
+  kranq VM.** Every test this session, automated and manual, exercises
+  kman's own mechanics up to the point of a successful `git push` to
+  kranq — routing, credential minting, source authentication — against
+  either a fake or (for the manual runs) a stub `post-receive` hook that
+  just echoes a canned `KRANQ-RESULT` line. Nothing in this environment
+  can run a real Lima VM, so whether Claude actually turns "add a TEST.md
+  file" into a sensible branch and PR, unattended, is unverified. Point
+  `kman slack serve --kranq-url` at a real kranq host to find out.
+- **The default-flow fallback has no rate limiting or loop protection.**
+  Any message that isn't `run <flow>` becomes a real push (if the sender
+  is granted `create-feature`) — a chatty channel could trigger a lot of
+  VM boots. Nothing about this phase changed kman's existing posture here
+  (an explicit `run <flow>` had the same property already), but the
+  fallback makes it easier to trigger by accident, worth a real look
+  before pointing this at a busy channel.
 
 Worth flagging about Phase 9, before it's forgotten:
 - **`access.flows` and `access.tools` are still declared-only.** See the

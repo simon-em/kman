@@ -474,6 +474,69 @@ still unproven inside a real kranq VM (needs a real kranq host and a
 real Slack app at the same time, which this session still doesn't have
 both of at once).
 
+**A Slack mention that isn't `run <flow>` falls back to a configurable
+default flow, its whole text becoming that flow's `TASK` argument.**
+`slack.ParseCommand(text, defaultFlow)` — `kman slack serve
+--default-flow` (env `$KMAN_DEFAULT_FLOW`, defaults to `create-feature`)
+sets it; empty disables the fallback and restores the old
+`run`-only behavior. An explicit `run <flow>` always wins even when a
+default is configured. `CanTrigger` still gates the resolved flow exactly
+as before — free-form routing doesn't bypass authorization, it just
+changes how the flow name is chosen. Because `args = []string{"TASK=" +
+text}` reuses the *same* `trigger.ParseAssignments`/`strings.Cut`
+machinery `run <flow> NAME=VALUE` already used, embedded `=` signs in the
+free-form text survive intact (`strings.Cut` only ever splits on the
+*first* `=`) with no new parsing path needed.
+
+**A `claude:` step's prompt text cannot reference a shell variable like
+`$TASK`, even though `TASK` really is exported in the process
+environment.** kranq's `BuildScript` heredocs the prompt with a
+*single-quoted* delimiter (`<<'CI_PROMPT_0'`), which disables all shell
+expansion inside it, so `$TASK` in the prompt text reaches Claude
+literally as the two characters `$` `T`, not the argument's value. The
+correct pattern, used by the `create-feature` flow: tell Claude to read
+the value itself at runtime (`` `echo "$TASK"` `` via its own Bash tool
+call), which works, because *that* shell invocation is a real,
+unquoted one, run by Claude after the prompt is already delivered, not
+part of the heredoc kranq built.
+
+**`internal/gitcache.Sync` takes an `authHeader` and injects it via
+`-c http.extraHeader=...`, never into the remote URL itself.** Added
+because `trigger.Run`'s own host-side "mirror the source repo before
+pushing to kranq" step has *no* relationship to a flow's `credentials:`/
+`BITBUCKET_TOKEN` (that's resolved for the VM's use, injected via push
+options, never seen by kman's own git commands) — cloning a *private*
+Bitbucket source repo from an unattended `kman slack serve` daemon (no
+SSH agent, no stored git credentials) failed outright until this existed.
+`http.extraHeader` was chosen specifically so the credential never lands
+in the mirror's on-disk `.git/config`, unlike a `https://user:token@host`
+URL, which git would otherwise happily persist as the `origin` remote.
+
+**Bitbucket's git-over-HTTPS endpoint requires Basic auth
+(`x-token-auth:<token>` as user:password), not a bare `Authorization:
+Bearer <token>` header, even though the REST API accepts Bearer just
+fine.** Found by testing directly: a Bearer header against `.git/info/
+refs?service=git-upload-pack` gets a flat `401`; `-u x-token-auth:<token>`
+(equivalently, `Authorization: Basic base64("x-token-auth:<token>")`)
+gets a `200`. `trigger.sourceAuthHeader` builds the Basic form
+specifically; getting this wrong is silent in the worst way; the header
+gets sent, git just fails with `fatal: Authentication failed`.
+
+**`trigger.sourceAuthHeader` auto-mints a `repository`-scoped
+(Bitbucket's own name for read access, not `repository:read`) Bitbucket
+credential whenever `Options.Source`/`spec.Repo` is a `bitbucket.org`
+URL and Bitbucket is configured, with no flow YAML involved at all.**
+This is deliberately separate from whatever credential a flow's own
+`credentials:` block declares for *its* use inside the VM — kman's own
+read of the source repo is a narrower, host-side-only concern, scoped to
+exactly `repository` (read), never whatever broader scope the flow
+itself might request for writing PRs. Best-effort: if Bitbucket isn't
+configured, or the source isn't a Bitbucket URL, or minting fails,
+`sourceAuthHeader` returns `""` and the clone proceeds unauthenticated,
+exactly the pre-existing behavior for a public repo — the failure (if
+any) still surfaces naturally as git's own authentication error, not a
+new, separate one.
+
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —
 rewrite it instead.

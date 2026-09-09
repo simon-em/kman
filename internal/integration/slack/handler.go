@@ -16,13 +16,14 @@ import (
 )
 
 type Handler struct {
-	Home     string
-	KranqURL string
-	MetaURL  string
+	Home        string
+	KranqURL    string
+	MetaURL     string
+	DefaultFlow string
 }
 
-func NewHandler(home, kranqURL, metaURL string) *Handler {
-	return &Handler{Home: home, KranqURL: kranqURL, MetaURL: metaURL}
+func NewHandler(home, kranqURL, metaURL, defaultFlow string) *Handler {
+	return &Handler{Home: home, KranqURL: kranqURL, MetaURL: metaURL, DefaultFlow: defaultFlow}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +76,7 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		}
 	}
 
-	flowName, args, err := ParseCommand(event.Text)
+	flowName, args, err := ParseCommand(event.Text, h.DefaultFlow)
 	if err != nil {
 		reply("%s", err.Error())
 		return

@@ -48,7 +48,7 @@ kman revoke <user/ID|group/NAME> <flow>
 kman web [--addr 127.0.0.1:8080]        # a browser UI over flows/users/groups/cron/integrations; every save is a git commit
 kman integration bitbucket status [user-id...]
 kman integration slack status
-kman slack serve [--addr 0.0.0.0:8081] --kranq-url <url> [--meta-url <url>]   # the Slack events endpoint; separate from kman web on purpose
+kman slack serve [--addr 0.0.0.0:8081] --kranq-url <url> [--meta-url <url>] [--default-flow <name>]   # the Slack events endpoint; separate from kman web on purpose
 kman meta serve [--addr 0.0.0.0:8082]   # the scoped callback endpoint a pushed VM calls through; separate listener again
 kman cron set <name> --flow <flow> --schedule "<cron-expr>" [NAME=VALUE...]
 kman cron ls
@@ -111,7 +111,23 @@ kman grant user/simon deploy-review
 
 Mentioning the bot with `@kman run deploy-review ENV=staging` in a channel
 runs the flow as `simon`, if `simon` (or one of their groups) has been
-granted it, and replies in-thread with the result. A flow that wants a
+granted it, and replies in-thread with the result. A mention that isn't
+`run <flow>` falls back to a default flow instead (`--default-flow`,
+defaults to `create-feature`) with the whole message text passed as that
+flow's `TASK` argument, so `@kman add a TEST.md file to kman-demo` works
+without knowing any flow name at all, as long as `simon` is granted
+`create-feature` too. A flow written for this needs to read its own
+`TASK` value at runtime (`` `echo "$TASK"` `` inside its own `claude:`
+step), not reference `$TASK` in the prompt text itself, kranq compiles a
+`claude:` prompt into a shell heredoc that doesn't expand variables.
+
+If a flow's `repo:` is a *private* `bitbucket.org` URL, kman mints its
+own short-lived, read-only credential to clone it (separate from
+whatever the flow's own `credentials:` declares for use inside the VM,
+that's a different, narrower, host-side-only concern) — nothing to
+configure beyond having Bitbucket set up already.
+
+A flow that wants a
 headless Claude step to be able to ask a human something mid-run declares
 `access.meta: [ask]`; kman then delivers a small MCP server into the VM
 (via `files:`) and disables the step's built-in `AskUserQuestion` in favor

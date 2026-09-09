@@ -3,6 +3,7 @@ package slack
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -139,7 +140,7 @@ func TestHandlerAnswersURLVerification(t *testing.T) {
 	slackSrv, _ := newFakeSlackServer(t)
 	secret := configureSlack(t, home, slackSrv.URL)
 
-	h := NewHandler(home, "unused", "")
+	h := NewHandler(home, "unused", "", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -164,7 +165,7 @@ func TestHandlerRejectsAnInvalidSignature(t *testing.T) {
 	slackSrv, _ := newFakeSlackServer(t)
 	configureSlack(t, home, slackSrv.URL)
 
-	h := NewHandler(home, "unused", "")
+	h := NewHandler(home, "unused", "", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -202,7 +203,7 @@ func TestHandlerTriggersAnAllowedFlowAndRepliesWithTheResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewHandler(home, kranq, "")
+	h := NewHandler(home, kranq, "", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -226,6 +227,69 @@ func TestHandlerTriggersAnAllowedFlowAndRepliesWithTheResult(t *testing.T) {
 	})
 }
 
+func TestHandlerRoutesFreeFormTextToTheDefaultFlow(t *testing.T) {
+	home := t.TempDir()
+	slackSrv, fakeSlack := newFakeSlackServer(t)
+	secret := configureSlack(t, home, slackSrv.URL)
+
+	taskFile := filepath.Join(t.TempDir(), "captured_task.txt")
+	remote := newRemoteWithCommit(t)
+	kranq := newBareKranqRepoWithHook(t, fmt.Sprintf(`
+count="${GIT_PUSH_OPTION_COUNT:-0}"
+i=0
+while [ "$i" -lt "$count" ]; do
+  eval "val=\$GIT_PUSH_OPTION_$i"
+  case "$val" in
+    env.TASK=*) echo "${val#env.TASK=}" > %s ;;
+  esac
+  i=$((i+1))
+done
+echo "KRANQ-RESULT id=default-flow-test status=ok exit=0"
+`, taskFile))
+
+	spec := flow.Spec{
+		Name:  "create-feature",
+		Repo:  remote,
+		Args:  map[string]flow.Arg{"TASK": {Required: true}},
+		Steps: []flow.Step{{Name: "a", Run: "echo hi"}},
+	}
+	if err := config.SaveFlow(home, spec, "test"); err != nil {
+		t.Fatal(err)
+	}
+	user := access.User{ID: "simon", SlackUserID: "U123", Flows: []string{"create-feature"}}
+	if err := config.SaveUser(home, user, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(home, kranq, "", "create-feature")
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	event := `{"type":"event_callback","event":{"type":"app_mention","channel":"C1","user":"U123","text":"<@UBOT> add a TEST.md file to kman-demo","ts":"1.1"}}`
+	resp, err := http.DefaultClient.Do(signedRequest(t, srv.URL, secret, []byte(event)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	waitFor(t, 5*time.Second, func() bool {
+		for _, m := range fakeSlack.snapshot() {
+			if strings.Contains(m, "create-feature") && strings.Contains(m, "status=ok") {
+				return true
+			}
+		}
+		return false
+	})
+
+	taskBytes, err := os.ReadFile(taskFile)
+	if err != nil {
+		t.Fatalf("hook did not see the TASK env var: %v", err)
+	}
+	if strings.TrimSpace(string(taskBytes)) != "add a TEST.md file to kman-demo" {
+		t.Errorf("TASK = %q", taskBytes)
+	}
+}
+
 func TestHandlerRefusesAFlowTheUserIsNotGrantedFor(t *testing.T) {
 	home := t.TempDir()
 	slackSrv, fakeSlack := newFakeSlackServer(t)
@@ -244,7 +308,7 @@ func TestHandlerRefusesAFlowTheUserIsNotGrantedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewHandler(home, "unused", "")
+	h := NewHandler(home, "unused", "", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 

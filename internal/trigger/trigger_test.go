@@ -2,6 +2,7 @@ package trigger
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
@@ -341,6 +342,37 @@ func TestRunComposesADocSkillIntoTheRenderedTask(t *testing.T) {
 	}
 	if strings.Contains(string(rendered), "mcp_servers:") {
 		t.Errorf("a doc skill should not add an mcp_servers block:\n%s", rendered)
+	}
+}
+
+func TestSourceAuthHeaderIsEmptyForANonBitbucketHost(t *testing.T) {
+	if got := sourceAuthHeader(t.TempDir(), "https://github.com/example/repo.git"); got != "" {
+		t.Errorf("sourceAuthHeader = %q, want empty for a non-bitbucket.org host", got)
+	}
+}
+
+func TestSourceAuthHeaderIsEmptyWhenBitbucketIsNotConfigured(t *testing.T) {
+	if got := sourceAuthHeader(t.TempDir(), "https://bitbucket.org/example/repo.git"); got != "" {
+		t.Errorf("sourceAuthHeader = %q, want empty when bitbucket isn't configured", got)
+	}
+}
+
+func TestSourceAuthHeaderMintsARepositoryScopedTokenForBitbucket(t *testing.T) {
+	var gotScope string
+	home := newFakeBitbucketVault(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotScope = r.FormValue("scope")
+		w.Write([]byte(`{"access_token":"SOURCE_AT","expires_in":7200}`))
+	})
+	got := sourceAuthHeader(home, "https://bitbucket.org/smntlbt/kman-demo.git")
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte("x-token-auth:SOURCE_AT"))
+	if got != want {
+		t.Errorf("sourceAuthHeader = %q, want %q (Basic auth with x-token-auth, which is what Bitbucket's git-over-HTTPS endpoint actually requires, confirmed live: a bare Bearer header gets a 401)", got, want)
+	}
+	if gotScope != "repository" {
+		t.Errorf("scope requested = %q, want repository (bitbucket's read scope)", gotScope)
 	}
 }
 
