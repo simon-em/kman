@@ -56,6 +56,14 @@ func (o *OAuth) Refresh(ctx context.Context, refreshToken string) (Token, error)
 	})
 }
 
+func (o *OAuth) ClientCredentials(ctx context.Context, scope string) (Token, error) {
+	form := url.Values{"grant_type": {"client_credentials"}}
+	if scope != "" {
+		form.Set("scope", scope)
+	}
+	return o.request(ctx, form)
+}
+
 type tokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`

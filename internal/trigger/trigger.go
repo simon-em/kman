@@ -163,15 +163,23 @@ func ResolveCredentials(home string, spec flow.Spec, userID string) (map[string]
 	return resolved, nil
 }
 
-func ResolveIntegrationCredential(home, name, userID string) (string, error) {
-	if userID == "" {
-		return "", fmt.Errorf("integration:%s needs an acting user; pass --as or set KMAN_ACTOR", name)
-	}
+func ResolveIntegrationCredential(home, ref, userID string) (string, error) {
+	name, scope, _ := strings.Cut(ref, ":")
 	switch name {
 	case "bitbucket":
 		provider, err := bitbucket.FromVault(home)
 		if err != nil {
 			return "", err
+		}
+		if scope != "" {
+			cred, err := provider.ScopedCredential(context.Background(), scope)
+			if err != nil {
+				return "", err
+			}
+			return cred.Value, nil
+		}
+		if userID == "" {
+			return "", fmt.Errorf("integration:%s needs an acting user; pass --as or set KMAN_ACTOR", name)
 		}
 		cred, err := provider.Credential(context.Background(), userID)
 		if err != nil {

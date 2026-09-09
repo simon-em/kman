@@ -75,6 +75,30 @@ access:
   credentials: [integration:bitbucket]
 ```
 
+That form mints a token for the human who ran `kman push --as <user-id>`
+(or triggered it via Slack), carrying whatever scopes the OAuth consumer
+itself was granted. For a task that shouldn't get that much, append the
+Bitbucket scope it actually needs:
+
+```yaml
+credentials:
+  BITBUCKET_TOKEN: integration:bitbucket:pullrequest
+access:
+  credentials: [integration:bitbucket:pullrequest]
+```
+
+This mints a fresh, short-lived, genuinely restricted token via Bitbucket's
+`client_credentials` grant, scoped to exactly what's asked for, not tied to
+any user (no `--as` needed for this form) and never cached. Bitbucket
+enforces the scope on every API call the token makes, not just at mint
+time, confirmed against the real API: a `pullrequest`-scoped token can list
+and comment on PRs but gets a hard `403` trying anything else, with the
+response spelling out exactly what was required versus granted. A scope
+name Bitbucket doesn't recognize fails the push immediately (Bitbucket
+itself rejects it, `400 invalid_scope`) rather than minting something
+broader than asked for. Scopes containing a colon work as-is, e.g.
+`integration:bitbucket:repository:write`.
+
 To use Slack, create a Slack app with an `app_mention` Event Subscription
 pointed at `kman slack serve`'s `/slack/events`, then:
 

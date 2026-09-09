@@ -614,6 +614,61 @@ whether or not that made sense. Fixed:
   had no way to surface, since it never had a reason to redirect
   anything.
 
+**Scoped Bitbucket credentials** — `integration:bitbucket:<scope>`, e.g.
+`integration:bitbucket:pullrequest`, mints a genuinely restricted,
+per-push token instead of the broad per-user one. Prompted directly by
+testing the real OAuth consumer above: the token minted through the
+normal per-user flow carried close to every scope the consumer was
+configured with (repository admin/delete, account write, pipeline write,
+the works), because that's fixed once at the consumer level, not
+something kman could narrow per flow.
+- `OAuth.ClientCredentials(ctx, scope)` — Bitbucket's `client_credentials`
+  grant, confirmed live to support a `scope` param that returns a token
+  narrower than the consumer's full configured set, and confirmed *enforced*:
+  a `pullrequest`-scoped real token could list/read PRs (`200`) but got a
+  hard `403` attempting `DELETE` on the repo, Bitbucket's own error
+  spelling out `"required": ["repository:delete"], "granted":
+  ["pullrequest"]`. An unrecognized scope name is rejected outright
+  (`400 invalid_scope`), also confirmed live — not silently ignored or
+  silently broadened.
+- `Provider.ScopedCredential(ctx, scope)` wraps it, returning an
+  `integration.Credential` the same shape `Provider.Credential` (the
+  per-user path) already returns — no new type, no special-casing
+  downstream.
+- `ResolveIntegrationCredential(home, ref, userID)`'s `ref` is now split
+  on the *first* `:` only (`name, scope, _ := strings.Cut(ref, ":")`), so
+  `integration:bitbucket:repository:write` correctly yields
+  `scope="repository:write"`, colon and all, not truncated at the first
+  `:` inside the scope name itself.
+- **No `--as`/`$KMAN_ACTOR` required for a scoped credential** — only the
+  unscoped `integration:bitbucket` form still requires it. A
+  `client_credentials` token has no human attached (Bitbucket's own audit
+  trail shows the actor as "Oauth client"), so there's nothing to
+  attribute a minted token to; requiring one anyway would have been
+  arbitrary.
+- **Never cached, never touches the vault's per-user token storage.**
+  `ScopedCredential` mints fresh on every resolution — deliberately, not
+  an oversight: a cached broad-then-narrowed token would defeat the point,
+  and Bitbucket's `client_credentials` tokens don't even return a
+  `refresh_token` to cache against.
+- No client-side scope-name validation was added, on purpose: hardcoding
+  Bitbucket's scope vocabulary into kman would drift the moment Bitbucket
+  changes it. Bitbucket's own `400 invalid_scope` at push time is the
+  source of truth, the same "resolved, not parsed, at push time" treatment
+  a plain vault secret name already gets.
+- Verified with `go test ./... -race` (`ClientCredentials` sending the
+  right grant_type/scope and omitting the scope param when empty,
+  surfacing a non-200; `ScopedCredential` minting correctly and never
+  registering as a "connected" user; `ResolveIntegrationCredential`
+  needing no acting user for a scoped ref, still requiring one for an
+  unscoped ref, and preserving colons in the scope name) plus a full real
+  run: a real flow declaring `credentials: BITBUCKET_TOKEN:
+  integration:bitbucket:pullrequest`, pushed with no `--as`, through
+  kman's actual `trigger.Run` → `ResolveCredentials` → `bitbucket.
+  ScopedCredential` → real Bitbucket API path, and the resulting token
+  independently re-verified exactly like the mechanism test above: reads
+  worked, a delete outside the granted scope got a real `403`.
+
 ## Left to do
 
 Everything from Phase 10 onward in [docs/design.md](design.md):

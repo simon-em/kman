@@ -60,6 +60,14 @@ func (p *Provider) Credential(ctx context.Context, userID string) (integration.C
 	return integration.Credential{Value: refreshed.AccessToken, ExpiresAt: refreshed.ExpiresAt}, nil
 }
 
+func (p *Provider) ScopedCredential(ctx context.Context, scope string) (integration.Credential, error) {
+	tok, err := p.OAuth.ClientCredentials(ctx, scope)
+	if err != nil {
+		return integration.Credential{}, fmt.Errorf("minting a %q-scoped bitbucket token: %w", scope, err)
+	}
+	return integration.Credential{Value: tok.AccessToken, ExpiresAt: tok.ExpiresAt}, nil
+}
+
 func (p *Provider) Connect(userID string, tok Token) error {
 	return p.save(userID, tok)
 }

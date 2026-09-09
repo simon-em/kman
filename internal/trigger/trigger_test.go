@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/meta"
 	"github.com/simon-em/kman/internal/vault"
 )
@@ -84,6 +87,66 @@ func TestResolveIntegrationCredentialRequiresAnActingUser(t *testing.T) {
 func TestResolveIntegrationCredentialRejectsAnUnknownIntegration(t *testing.T) {
 	if _, err := ResolveIntegrationCredential(t.TempDir(), "not-a-real-integration", "simon"); err == nil {
 		t.Fatal("expected an error for an unknown integration")
+	}
+}
+
+func newFakeBitbucketVault(t *testing.T, handler http.HandlerFunc) string {
+	t.Helper()
+	home := t.TempDir()
+	v, err := vault.Open(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Set(bitbucket.ClientIDKey, "cid"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Set(bitbucket.ClientSecretKey, "csecret"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	if err := v.Set(bitbucket.BaseURLKey, srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	return home
+}
+
+func TestResolveIntegrationCredentialWithAScopeNeedsNoActingUser(t *testing.T) {
+	home := newFakeBitbucketVault(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"SCOPED_AT","expires_in":7200}`))
+	})
+	value, err := ResolveIntegrationCredential(home, "bitbucket:pullrequest", "")
+	if err != nil {
+		t.Fatalf("ResolveIntegrationCredential: %v", err)
+	}
+	if value != "SCOPED_AT" {
+		t.Errorf("value = %q, want SCOPED_AT", value)
+	}
+}
+
+func TestResolveIntegrationCredentialWithAScopeSendsItAsTheRequestedScope(t *testing.T) {
+	var gotScope string
+	home := newFakeBitbucketVault(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotScope = r.FormValue("scope")
+		w.Write([]byte(`{"access_token":"AT","expires_in":7200}`))
+	})
+	if _, err := ResolveIntegrationCredential(home, "bitbucket:repository:write", ""); err != nil {
+		t.Fatal(err)
+	}
+	if gotScope != "repository:write" {
+		t.Errorf("scope = %q, want repository:write (colons in the scope name preserved)", gotScope)
+	}
+}
+
+func TestResolveIntegrationCredentialWithNoScopeStillNeedsAnActingUser(t *testing.T) {
+	home := newFakeBitbucketVault(t, func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("should not call bitbucket when no acting user is given and no scope is requested")
+	})
+	if _, err := ResolveIntegrationCredential(home, "bitbucket", ""); err == nil {
+		t.Fatal("expected an error when no acting user is given and no scope is requested")
 	}
 }
 

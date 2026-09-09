@@ -25,6 +25,51 @@ func newTestProvider(t *testing.T, refreshHandler http.HandlerFunc) *Provider {
 	return &Provider{OAuth: oauth, Vault: v}
 }
 
+func TestScopedCredentialMintsAClientCredentialsToken(t *testing.T) {
+	var gotGrantType, gotScope string
+	p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotGrantType = r.FormValue("grant_type")
+		gotScope = r.FormValue("scope")
+		w.Write([]byte(`{"access_token":"SCOPED_AT","expires_in":7200,"scope":"pullrequest"}`))
+	})
+
+	cred, err := p.ScopedCredential(context.Background(), "pullrequest")
+	if err != nil {
+		t.Fatalf("ScopedCredential: %v", err)
+	}
+	if gotGrantType != "client_credentials" || gotScope != "pullrequest" {
+		t.Errorf("grant_type=%q scope=%q", gotGrantType, gotScope)
+	}
+	if cred.Value != "SCOPED_AT" {
+		t.Errorf("Value = %q, want SCOPED_AT", cred.Value)
+	}
+}
+
+func TestScopedCredentialNeverTouchesTheVault(t *testing.T) {
+	p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"access_token":"SCOPED_AT","expires_in":7200}`))
+	})
+	if _, err := p.ScopedCredential(context.Background(), "pullrequest"); err != nil {
+		t.Fatal(err)
+	}
+	if p.Connected("simon") {
+		t.Error("a scoped credential should not register as a connected user")
+	}
+}
+
+func TestScopedCredentialSurfacesAnError(t *testing.T) {
+	p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_scope"}`))
+	})
+	if _, err := p.ScopedCredential(context.Background(), "not-a-real-scope"); err == nil {
+		t.Fatal("expected an error for an invalid scope")
+	}
+}
+
 func TestCredentialFailsWhenNotConnected(t *testing.T) {
 	p := newTestProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("should not call bitbucket for a never-connected user")

@@ -226,6 +226,32 @@ that path uses the default. `Refresh` is still only proven against the
 fake server (the real refresh_token has a multi-hour lifetime, nothing in
 this session waited that out).
 
+**`integration:bitbucket:<scope>` mints a genuinely restricted,
+per-push token via Bitbucket's `client_credentials` grant, never the
+per-user OAuth path.** Confirmed against the real API: Bitbucket's token
+endpoint accepts a `scope` param that narrows the returned token below
+whatever the OAuth consumer itself is configured with, and *enforces* it
+server-side on every later call, not just at mint time, a
+`pullrequest`-scoped token gets a hard `403` (with `required`/`granted`
+spelled out in the error body) trying anything outside that scope. This
+is a different grant type from the `integration:bitbucket` (no scope)
+form Phase 6 built: `client_credentials` has no human attached (Bitbucket
+shows the actor as "Oauth client", not a person), never touches the
+vault's per-user token storage, and is never cached, `Resolve
+IntegrationCredential` calls `Provider.ScopedCredential` fresh on every
+resolution rather than `Provider.Credential`'s load-or-refresh-and-cache
+path. `--as`/`$KMAN_ACTOR` is **not** required for this form (there's no
+user to attribute a self-contained app-level token to) — only the
+unscoped, per-user form still requires it. The scope string can itself
+contain colons (`integration:bitbucket:repository:write`);
+`ResolveIntegrationCredential` splits on the *first* colon only
+(`strings.Cut`), not the last, so this doesn't need special-casing.
+kman deliberately doesn't validate scope names client-side — Bitbucket's
+own `400 invalid_scope` is the source of truth, since hardcoding
+Bitbucket's scope vocabulary into kman would drift the moment Bitbucket
+changes it, the same reasoning that already applies to plain vault
+secret names never being validated for existence until push time.
+
 **`internal/trigger` exists because `kman push` and the Slack handler need
 byte-identical arg/credential resolution and push semantics.** It used to
 be one function, `cli.runPush`. Splitting it out only when a second real

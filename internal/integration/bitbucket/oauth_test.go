@@ -95,6 +95,66 @@ func TestRefreshSendsRefreshToken(t *testing.T) {
 	}
 }
 
+func TestClientCredentialsSendsGrantTypeAndScope(t *testing.T) {
+	var gotGrantType, gotScope, gotUser, gotPass string
+	_, oauth := fakeBitbucket(t, func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, _ = r.BasicAuth()
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		gotGrantType = r.FormValue("grant_type")
+		gotScope = r.FormValue("scope")
+		w.Write([]byte(`{"access_token":"SCOPED_AT","expires_in":7200,"scope":"pullrequest"}`))
+	})
+
+	tok, err := oauth.ClientCredentials(context.Background(), "pullrequest")
+	if err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	if gotUser != "cid" || gotPass != "csecret" {
+		t.Errorf("basic auth = %q/%q", gotUser, gotPass)
+	}
+	if gotGrantType != "client_credentials" || gotScope != "pullrequest" {
+		t.Errorf("grant_type=%q scope=%q", gotGrantType, gotScope)
+	}
+	if tok.AccessToken != "SCOPED_AT" {
+		t.Errorf("AccessToken = %q", tok.AccessToken)
+	}
+	if tok.RefreshToken != "" {
+		t.Errorf("RefreshToken = %q, want empty for client_credentials", tok.RefreshToken)
+	}
+}
+
+func TestClientCredentialsOmitsScopeParamWhenEmpty(t *testing.T) {
+	sawScopeParam := false
+	_, oauth := fakeBitbucket(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if r.Form.Has("scope") {
+			sawScopeParam = true
+		}
+		w.Write([]byte(`{"access_token":"AT","expires_in":7200}`))
+	})
+
+	if _, err := oauth.ClientCredentials(context.Background(), ""); err != nil {
+		t.Fatalf("ClientCredentials: %v", err)
+	}
+	if sawScopeParam {
+		t.Error("expected no scope param to be sent when scope is empty")
+	}
+}
+
+func TestClientCredentialsSurfacesAnErrorResponse(t *testing.T) {
+	_, oauth := fakeBitbucket(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		w.Write([]byte(`{"error":"invalid_scope"}`))
+	})
+	if _, err := oauth.ClientCredentials(context.Background(), "not-a-real-scope"); err == nil {
+		t.Fatal("expected an error for a non-200 response")
+	}
+}
+
 func TestExchangeSurfacesAnErrorResponse(t *testing.T) {
 	_, oauth := fakeBitbucket(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
