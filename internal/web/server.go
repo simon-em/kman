@@ -11,6 +11,7 @@ import (
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
+	"github.com/simon-em/kman/internal/integration/slack"
 	"gopkg.in/yaml.v3"
 )
 
@@ -351,11 +352,20 @@ type integrationRow struct {
 	Connected bool
 }
 
+type slackRow struct {
+	UserID      string
+	SlackUserID string
+}
+
 type integrationsData struct {
 	Configured bool
 	ConfigErr  string
 	Rows       []integrationRow
 	Actor      string
+
+	SlackConfigured bool
+	SlackConfigErr  string
+	SlackRows       []slackRow
 }
 
 func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
@@ -369,9 +379,18 @@ func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	if provErr != nil {
 		data.ConfigErr = provErr.Error()
 	}
+	_, slackErr := slack.FromVault(s.Home)
+	data.SlackConfigured = slackErr == nil
+	if slackErr != nil {
+		data.SlackConfigErr = slackErr.Error()
+	}
 	for _, id := range ids {
 		connected := provErr == nil && provider.Connected(id)
 		data.Rows = append(data.Rows, integrationRow{UserID: id, Connected: connected})
+		u, err := config.LoadUser(s.Home, id)
+		if err == nil {
+			data.SlackRows = append(data.SlackRows, slackRow{UserID: id, SlackUserID: u.SlackUserID})
+		}
 	}
 	render(w, "Integrations", "integrations_list", data)
 }

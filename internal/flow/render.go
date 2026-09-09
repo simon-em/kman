@@ -24,6 +24,7 @@ type kranqTask struct {
 	Kranqfile string            `yaml:"kranqfile,omitempty"`
 	Resources Resources         `yaml:"resources,omitempty"`
 	Env       map[string]string `yaml:"env,omitempty"`
+	Files     []File            `yaml:"files,omitempty"`
 	Steps     []kranqStep       `yaml:"steps"`
 }
 
@@ -36,6 +37,7 @@ func Render(s Spec) (string, error) {
 		Kranqfile: s.Kranqfile,
 		Resources: s.Resources,
 		Env:       s.Env,
+		Files:     s.Files,
 		Steps:     make([]kranqStep, len(s.Steps)),
 	}
 	for i, step := range s.Steps {

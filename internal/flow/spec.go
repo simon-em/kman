@@ -1,8 +1,11 @@
 package flow
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,6 +42,14 @@ type Step struct {
 	ContinueOn      bool                 `yaml:"continue_on_error"`
 }
 
+const MaxFileSize = 1 << 20
+
+type File struct {
+	Path    string `yaml:"path"`
+	Mode    string `yaml:"mode"`
+	Content string `yaml:"content"`
+}
+
 type Spec struct {
 	Name        string            `yaml:"name"`
 	Repo        string            `yaml:"repo"`
@@ -50,6 +61,7 @@ type Spec struct {
 	Env         map[string]string `yaml:"env"`
 	Credentials map[string]string `yaml:"credentials"`
 	Access      Access            `yaml:"access"`
+	Files       []File            `yaml:"files"`
 	Steps       []Step            `yaml:"steps"`
 }
 
@@ -96,10 +108,37 @@ func (s Spec) validate() error {
 	if err := s.Access.validate(); err != nil {
 		return err
 	}
+	for i, f := range s.Files {
+		if err := f.validate(); err != nil {
+			return fmt.Errorf("files[%d] (%s): %w", i, f.Path, err)
+		}
+	}
 	for i, step := range s.Steps {
 		if err := step.validate(); err != nil {
 			return fmt.Errorf("step %d (%s): %w", i, step.Name, err)
 		}
+	}
+	return nil
+}
+
+func (f File) validate() error {
+	if f.Path == "" {
+		return errors.New("needs a path")
+	}
+	if strings.Contains(f.Path, "..") {
+		return fmt.Errorf("path %q must not contain \"..\"", f.Path)
+	}
+	if f.Mode != "" {
+		if _, err := strconv.ParseUint(f.Mode, 8, 32); err != nil {
+			return fmt.Errorf("mode %q is not valid octal", f.Mode)
+		}
+	}
+	decoded, err := base64.StdEncoding.DecodeString(f.Content)
+	if err != nil {
+		return fmt.Errorf("content is not base64: %w", err)
+	}
+	if len(decoded) > MaxFileSize {
+		return fmt.Errorf("is %d bytes, over the %d byte limit", len(decoded), MaxFileSize)
 	}
 	return nil
 }

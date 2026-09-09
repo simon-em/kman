@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0-4 and 6 (Phase 5 landed in the kranq repo, not here). See
+Phases 0-7 (Phase 5 landed and shipped in the kranq repo, not here). See
 [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
@@ -94,12 +94,14 @@ local, file-based, machine-keyed store), not a literal dependency on the
 `age` tool. Only names, never values, go into the committed config repo —
 unlike kranq's own single-operator, plain `0600 $KRANQ_HOME/env`, because
 kman holds *other people's* long-lived credentials. The access model
-(Phase 3) exists now, but `Registry.CanTrigger` still isn't consulted by
-anything live (that starts at Phase 7's Slack allow-list check): any flow
-can still bind any secret or integration credential today, the grant is
-just recorded, not checked. Per-user Bitbucket OAuth tokens (Phase 6) live
-in this same vault, namespaced `bitbucket/oauth/<user-id>/...` — no second
-secrets store for integration-minted credentials.
+(Phase 3) exists since Phase 3, but sat unconsulted by any live caller
+until Phase 7: `Registry.CanTrigger` is now checked by the Slack handler
+before a flow is pushed. Nothing else calls it yet — `kman push` from the
+CLI still doesn't check whether `--as` is actually allowed to trigger the
+flow it's pushing, only Slack-triggered pushes are gated. Per-user
+Bitbucket OAuth tokens (Phase 6) live in this same vault, namespaced
+`bitbucket/oauth/<user-id>/...` — no second secrets store for
+integration-minted credentials.
 
 **A flow's `credentials:` block is resolved at push time and merged into
 the same env as `args:`, with a hard error on collision.** `kman push`
@@ -195,12 +197,14 @@ token for a push requires knowing whose, something no kman command needed
 to know before this phase. A push using an `integration:` credential with
 no acting user known fails immediately, by name, rather than guessing.
 
-**`internal/integration`'s `TriggerChannel` is intentionally an empty
-marker interface right now.** Bitbucket only needed `CredentialProvider`
-to be real; nothing yet needs `TriggerChannel` to be more than "this is an
-integration that can trigger flows" — giving it a full method set before
-Phase 7's Slack integration has an actual event to shape it against would
-mean guessing a design Phase 7 would likely just replace.
+**`internal/integration`'s `TriggerChannel` is still an empty marker
+interface, even now that Slack (a real trigger source) exists.** `slack.
+Provider` implements it trivially (it already has `Name()`), but nothing
+calls through the interface — the Slack handler is concrete, calling
+`slack.Provider`/`slack.Handler` directly, not driven through
+`TriggerChannel` dispatch. There's still only one implementation; widening
+the interface to something a second one could plug into is a decision to
+make when there's a second one, not before.
 
 **Bitbucket OAuth has been proven against a fake server, never against
 real bitbucket.org.** `internal/integration/bitbucket` is fully tested
@@ -213,6 +217,53 @@ through Bitbucket's actual consent screen. `bitbucket/oauth/base_url`
 pointing the client at a stand-in server for tests today, and at Bitbucket
 Server/Data Center for real on-prem use later — it is not test-only
 scaffolding bolted onto production code.
+
+**`internal/trigger` exists because `kman push` and the Slack handler need
+byte-identical arg/credential resolution and push semantics.** It used to
+be one function, `cli.runPush`. Splitting it out only when a second real
+caller (Slack) showed up, rather than pre-factoring it in Phase 1, is the
+same "extract duplication when the two copies share a reason to change"
+discipline the maintainer's global instructions call for — there was
+nothing to extract until there were two callers. `trigger.Run` returns a
+`*trigger.Error{Stage, Err}` specifically so the CLI can still choose a
+POSIX exit code per failure stage even though the function itself is
+caller-agnostic.
+
+**A Slack-triggered push routes the bot token through `Options.ExtraEnv`,
+not through `mcp_servers.kman-ask.env`.** docs/design.md's own Phase 7 text
+lists only `KMAN_RUN_ID`/`KMAN_FLOW_ID`/`KMAN_SLACK_CHANNEL` in that env
+block, deliberately omitting the token — putting it there would bake it
+into the rendered task YAML kman writes to a temp file and pushes as
+`-o task_file=`. `ExtraEnv` instead flows through the same push-option env
+path a resolved `credentials:` value does, so it only ever exists as a
+shell-exported variable, inherited by the MCP server subprocess like any
+other child process of the step.
+
+**`kman slack serve` is a separate command and a separate listener from
+`kman web`, not a route mounted on it.** `kman web` binds `127.0.0.1` by
+default specifically because it has no login (a documented Phase 4
+tradeoff); Slack's Events API needs a URL it can reach from the outside.
+Keeping them as two processes/ports means the unauthenticated admin UI
+never has to be exposed for Slack to work — the Slack endpoint has its own
+real authentication (`slack.VerifySignature`, Slack's HMAC scheme with a
+5-minute replay window) and does nothing else.
+
+**The AskUserQuestion relay (`internal/integration/slack/assets/
+kman-ask.py`) is opt-in per flow, via `access.meta: [ask]`, checked with
+`flow.Access.HasMeta`.** Nothing injects it unless a flow asks for it —
+`InjectAskRelay` operates on an in-memory copy of the `flow.Spec` inside
+the Slack handler at push time (never mutates the loaded spec, so a second
+push of the same flow starts from the same base) and only touches
+`claude:` steps, since `mcp_servers` is invalid on a `run:` step anyway.
+
+**`kman-ask.py` mirrors kranq's own `assets/mcp/bitbucket-mcp.py` shape on
+purpose** (the same `initialize`/`tools/list`/`tools/call` stdio JSON-RPC
+loop, `urllib`-only, no dependencies) rather than inventing a second MCP
+server pattern — it's proven directly (`python3 kman-ask.py` fed synthetic
+stdin, both the handshake and a `tools/call` error path), but has never run
+for real inside a kranq VM with a real Claude Code process talking to it
+over stdio; that needs a real kranq host and a real Slack app at the same
+time, neither of which exists in this environment yet.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

@@ -2,17 +2,15 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/simon-em/kman/internal/exitcode"
-	"github.com/simon-em/kman/internal/flow"
-	"github.com/simon-em/kman/internal/gitcache"
 	"github.com/simon-em/kman/internal/kranqpush"
-	"github.com/simon-em/kman/internal/vault"
+	"github.com/simon-em/kman/internal/trigger"
 )
 
 func runPush(env Env, args []string) int {
@@ -41,25 +39,10 @@ func runPush(env Env, args []string) int {
 		return code
 	}
 
-	provided, err := parseArgAssignments(positional[1:])
+	provided, err := trigger.ParseAssignments(positional[1:])
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
 		return exitcode.Usage
-	}
-	resolvedArgs, err := flow.ResolveArgs(spec, provided)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InvalidSpec
-	}
-	resolvedCreds, err := resolveCredentials(spec, *asUser)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InvalidSpec
-	}
-	pushEnv, err := mergeEnv(resolvedArgs, resolvedCreds)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InvalidSpec
 	}
 
 	if *kranqURL == "" {
@@ -67,42 +50,18 @@ func runPush(env Env, args []string) int {
 		return exitcode.Usage
 	}
 
-	rendered, err := flow.Render(spec)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InternalError
-	}
-	taskFile, err := writeTempTask(rendered)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InternalError
-	}
-	defer os.Remove(taskFile)
-
-	ctx := context.Background()
-	sourceDir, err := resolveSource(ctx, *source)
-	if err != nil {
-		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.InternalError
-	}
-
-	if err := kranqpush.UpdateMirror(ctx, sourceDir, "HEAD", *kranqURL, gitcache.Slug(*source)); err != nil {
-		fmt.Fprintf(env.Stderr, "kman: warning: %v\n", err)
-	}
-
-	result, err := kranqpush.Push(ctx, sourceDir, "HEAD", kranqpush.Options{
+	result, err := trigger.Run(context.Background(), kmanHome(), spec, provided, trigger.Options{
 		KranqURL: *kranqURL,
-		TaskFile: taskFile,
-		Repo:     spec.Repo,
-		Branch:   firstNonEmpty(*branch, spec.Branch),
+		Source:   *source,
+		Branch:   *branch,
 		Label:    *label,
 		Keep:     *keep,
-		Env:      pushEnv,
 		Detach:   *detach,
+		AsUser:   *asUser,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
-		return exitcode.Unreachable
+		return pushExitCode(err)
 	}
 	if *detach {
 		fmt.Fprintln(env.Stdout, "queued")
@@ -113,6 +72,21 @@ func runPush(env Env, args []string) int {
 		return result.ExitCode
 	}
 	return exitcode.FromTask(result.ExitCode)
+}
+
+func pushExitCode(err error) int {
+	var te *trigger.Error
+	if errors.As(err, &te) {
+		switch te.Stage {
+		case trigger.StageArgs, trigger.StageCredentials:
+			return exitcode.InvalidSpec
+		case trigger.StageSource:
+			return exitcode.InternalError
+		case trigger.StagePush:
+			return exitcode.Unreachable
+		}
+	}
+	return exitcode.InternalError
 }
 
 type boolFlag interface {
@@ -151,101 +125,4 @@ func parsePermuted(fs *flag.FlagSet, args []string) ([]string, error) {
 		return nil, err
 	}
 	return positional, nil
-}
-
-func resolveCredentials(spec flow.Spec, userID string) (map[string]string, error) {
-	if len(spec.Credentials) == 0 {
-		return nil, nil
-	}
-	var v *vault.Vault
-	resolved := map[string]string{}
-	for envName, secretName := range spec.Credentials {
-		if name, ok := strings.CutPrefix(secretName, "integration:"); ok {
-			value, err := resolveIntegrationCredential(name, userID)
-			if err != nil {
-				return nil, fmt.Errorf("credential %s (%s): %w", envName, secretName, err)
-			}
-			resolved[envName] = value
-			continue
-		}
-		if v == nil {
-			var err error
-			v, err = vault.Open(kmanHome())
-			if err != nil {
-				return nil, err
-			}
-		}
-		value, err := v.Get(secretName)
-		if err != nil {
-			return nil, fmt.Errorf("credential %s (%s): %w", envName, secretName, err)
-		}
-		resolved[envName] = value
-	}
-	return resolved, nil
-}
-
-func mergeEnv(sources ...map[string]string) (map[string]string, error) {
-	merged := map[string]string{}
-	for _, source := range sources {
-		for name, value := range source {
-			if _, exists := merged[name]; exists {
-				return nil, fmt.Errorf("%q is set by more than one of the flow's args/credentials", name)
-			}
-			merged[name] = value
-		}
-	}
-	return merged, nil
-}
-
-func parseArgAssignments(args []string) (map[string]string, error) {
-	out := map[string]string{}
-	for _, a := range args {
-		name, value, ok := strings.Cut(a, "=")
-		if !ok {
-			return nil, fmt.Errorf("%q is not NAME=VALUE", a)
-		}
-		out[name] = value
-	}
-	return out, nil
-}
-
-func writeTempTask(content string) (string, error) {
-	f, err := os.CreateTemp("", "kman-task-*.yaml")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(content); err != nil {
-		return "", err
-	}
-	return f.Name(), nil
-}
-
-func resolveSource(ctx context.Context, source string) (string, error) {
-	if looksLikeRemote(source) {
-		return gitcache.Sync(ctx, kmanHome(), source)
-	}
-	return gitDirOf(source)
-}
-
-func looksLikeRemote(s string) bool {
-	return strings.Contains(s, "://") || strings.Contains(s, "@")
-}
-
-func gitDirOf(path string) (string, error) {
-	cmd := exec.Command("git", "-C", path, "rev-parse", "--absolute-git-dir")
-	out, err := cmd.Output()
-	if err != nil {
-		return "", fmt.Errorf("%s is not a git directory: %w", path, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, v := range values {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }

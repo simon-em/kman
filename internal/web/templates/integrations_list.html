@@ -18,4 +18,22 @@ from an OAuth consumer registered in your Bitbucket workspace settings.</p>
 {{else}}<tr><td colspan="2"><em>no users yet</em></td></tr>{{end}}
 </table>
 {{end}}
+
+<h2>Slack</h2>
+{{if not .SlackConfigured}}
+<p class="error">Not configured: {{.SlackConfigErr}}</p>
+<p>Set it up with <code>kman secret set slack/bot_token &lt;token&gt;</code> and
+<code>kman secret set slack/signing_secret &lt;secret&gt;</code>, using the values from your
+Slack app's "OAuth & Permissions" and "Basic Information" pages, then run
+<code>kman slack serve</code> and point the app's Event Subscriptions request URL at it.</p>
+{{else}}
+<p>Configured. A user's Slack identity is the "Slack ID" field on their user page; a Slack
+message only reaches kman if that field is set, and only triggers a flow the user (or one of
+their groups) has been granted.</p>
+<table border="1" cellpadding="4">
+<tr><th>User</th><th>Slack ID</th></tr>
+{{range .SlackRows}}<tr><td>{{.UserID}}</td><td>{{if .SlackUserID}}{{.SlackUserID}}{{else}}<em>not linked</em>{{end}}</td></tr>
+{{else}}<tr><td colspan="2"><em>no users yet</em></td></tr>{{end}}
+</table>
+{{end}}
 {{end}}

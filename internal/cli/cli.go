@@ -37,7 +37,8 @@ func init() {
 		"grant":       {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
 		"revoke":      {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
 		"web":         {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},
-		"integration": {"integration bitbucket status [user-id...]", "check integration connection status", runIntegration},
+		"integration": {"integration bitbucket|slack status ...", "check integration connection status", runIntegration},
+		"slack":       {"slack serve [--addr HOST:PORT] --kranq-url <url>", "serve the Slack events endpoint (separate from the admin UI)", runSlack},
 		"help":        {"help [command]", "show usage", runHelp},
 	}
 }

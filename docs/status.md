@@ -170,10 +170,8 @@ own tree is unchanged by it. kranq's `task.Spec` gained `files:` (a
 `writeFileStaging`, committed as kranq `bff29da`). Verified with kranq's
 own test suite (`go test ./...` unaffected, new tests for `File.validate`
 and real-bash execution of the staging step) and a manual `kranq
-validate`/`render`/execute smoke test. **Not yet pushed to kranq's
-remote** — that commit exists locally on the mac mini/dev machine only;
-confirm with the operator before pushing, same as any change to a shared
-repo. This is what Phase 7's `kman-ask` MCP relay and Phase 9's declared
+validate`/`render`/execute smoke test. Pushed to kranq's remote as `bff29da`
+after operator review. This is what Phase 7's `kman-ask` MCP relay and Phase 9's declared
 skills/MCP access will build on: a flow can now carry its own tool
 implementation in the push instead of depending on what kranq happened
 to embed at build time.
@@ -233,13 +231,134 @@ Not built, on purpose, per docs/design.md: Slack itself and GitHub as a
 second `CredentialProvider` (Phase 6 only had to prove the interface
 generalizes, not generalize it twice).
 
+**Phase 7** — Slack integration, blank-VM-per-request, the AskUserQuestion
+relay:
+- `internal/trigger` — the compile-args-then-push logic that used to live
+  entirely inside `cli.runPush` moved here (`Run`, `ResolveCredentials`,
+  `MergeEnv`, `ParseAssignments`), so `kman push` and the new Slack handler
+  share one implementation instead of two copies drifting apart. `Run`
+  wraps a failure in a staged `*trigger.Error{Stage, Err}` so the CLI can
+  still map it to the right POSIX exit code
+  (`args`/`credentials`→`InvalidSpec`, `source`→`InternalError`,
+  `push`→`Unreachable`) while a caller that doesn't care about exit codes
+  (Slack) can just read the message. `Options.ExtraEnv` is new: a third env
+  source alongside args/credentials, merged in through the same
+  collision-checked `MergeEnv`, added so the Slack handler can inject
+  `SLACK_BOT_TOKEN` without it going through `access.credentials`/the vault
+  (it isn't a per-user credential, it's kman's own bot token).
+- `flow.Spec` gained `files:` (`flow.File{Path,Mode,Content}`,
+  `flow.MaxFileSize`), a direct mirror of kranq's own Phase-5 addition,
+  passed straight through in `Render`. This is the first flow-schema growth
+  since Phase 3, on purpose: nothing needed it until the ask relay did. A
+  flow author can also declare `files:` directly, for the same reason
+  kranq's own version exists — carrying a tool's implementation alongside
+  the task that uses it.
+- `flow.Access` gained `HasMeta(name string) bool`, a small generic
+  addition (Phase 3's `Access.Meta` field already existed; this is just the
+  first thing that reads it) — used to check for the `ask` capability that
+  opts a flow into the relay.
+- `internal/integration/slack` — `Client.PostMessage` (`chat.postMessage`),
+  `VerifySignature` (Slack's `v0=` HMAC-SHA256 scheme, with the 5-minute
+  replay-window check Slack's own docs call for), `ParseEnvelope`/`Event`
+  (Events API JSON, including the `url_verification` handshake),
+  `ParseCommand` (strips the `<@BOTID>` mention, expects `run <flow>
+  [NAME=VALUE...]`), and `Handler` — the actual `POST /slack/events`
+  endpoint: verify the signature, answer `url_verification`, ignore
+  anything that isn't a human `app_mention`, ack within the request (Slack
+  requires a reply inside 3s) and do the real work — resolve the Slack user
+  to a kman `User` (`Registry.UserBySlackID`), check
+  `Registry.CanTrigger`, load the flow, push it via `internal/trigger`,
+  and post the result back — in a goroutine, since a push blocks until
+  kranq's `KRANQ-RESULT` line comes back and that can take minutes. Every
+  reply lands in a thread (the incoming message's own `ts` if it wasn't
+  already in a thread), so a channel with several requests in flight stays
+  readable.
+- **Per-user allow-listing is exactly Phase 3's `CanTrigger`, no new
+  mechanism** — a Slack user with no linked kman `User`, or a linked user
+  with no grant for the named flow, gets a named reason back in the
+  channel, never a silent no-op.
+- **The "blank VM" path needed no new code.** A flow pushed with no
+  `kranqfile:` already gets kranq's own base layer with nothing on top —
+  that was already true before this phase; Slack triggering it is just
+  another caller of `kman push`'s existing behavior.
+- **Visibility is Slack's own channel model, not a second layer inside
+  kman.** kman posts the result to whatever channel the request came from;
+  it never decides who else can see that channel. The permission check is
+  against the triggering user (`CanTrigger`), never against who else might
+  read the reply.
+- **The AskUserQuestion relay is an MCP server (`kman-ask`), not an SDK
+  rewrite**, exactly as docs/design.md called for. `internal/integration/
+  slack/assets/kman-ask.py` (go:embed'd) implements the same minimal
+  stdio JSON-RPC shape as kranq's existing `assets/mcp/bitbucket-mcp.py` —
+  `initialize`/`tools/list`/`tools/call` — with one tool,
+  `ask_user_question`: posts to Slack, polls `conversations.replies` on the
+  thread every 3s up to a timeout (default 10 minutes), returns the first
+  human (non-bot) reply as the tool result. `InjectAskRelay` wires this in
+  at push time, only when a flow declares `access.meta: [ask]`: it appends
+  the script to `files:`, and on every `claude:` step it adds an
+  `mcp_servers.kman-ask` entry (`command: python3`, `args: [the staged
+  path]`, `env: {KMAN_RUN_ID, KMAN_FLOW_ID, KMAN_SLACK_CHANNEL,
+  KMAN_SLACK_THREAD_TS}`) and appends `AskUserQuestion` to that step's
+  `disallowed_tools`, so Claude has no choice but to go through the relay.
+  The bot token itself is deliberately **not** in that env map — it travels
+  as `SLACK_BOT_TOKEN` via `Options.ExtraEnv` (a push-option env var,
+  exactly like a resolved credential), inherited by every step's shell and
+  therefore by the MCP server subprocess too, rather than being baked into
+  the `mcp_servers:` block of the rendered task YAML.
+- A `/integrations` panel section for Slack (configured/not, and a table of
+  users with their linked Slack ID) — Slack identity linking itself needed
+  no new UI, since Phase 3/4 already put `slack_user_id` on the user edit
+  form; this phase only had a connection-status panel to add, matching
+  Bitbucket's.
+- `kman slack serve [--addr] --kranq-url <url>` is a **separate** command
+  from `kman web`, deliberately: `kman web` binds `127.0.0.1` by default
+  specifically because it has no login (Phase 4's documented tradeoff), and
+  Slack's Events API needs a publicly reachable endpoint. Splitting them
+  keeps the unauthenticated admin UI off any address Slack (or anything
+  else) can reach, while the Slack endpoint carries its own real
+  authentication (the signature check) and does nothing else.
+- Verified with `go test ./... -race` across the new/changed packages (unit
+  tests for the signature scheme, command parsing, `InjectAskRelay`'s
+  non-mutation of the input spec, and an end-to-end `Handler` test using a
+  fake Slack API server and a real local bare git repo standing in for
+  kranq, plus a manual run: a real `kman slack serve` process, a real
+  Python fake-Slack HTTP server, a signature computed independently in
+  Python (not reusing kman's own Go implementation) to catch any drift
+  between the two, and a real local `post-receive` hook — the whole
+  signature → allow-list → push → thread reply path observed working, plus
+  the "no linked user" rejection path.
+
+Not built, on purpose: meta access and cron (Phase 8).
+
 ## Left to do
 
-Everything from Phase 7 onward in [docs/design.md](design.md): the Slack
-integration, meta access, cron, declared MCP/skills access, and
-distribution past the Homebrew stub.
+Everything from Phase 8 onward in [docs/design.md](design.md): meta
+access, cron, declared MCP/skills access, and distribution past the
+Homebrew stub.
 
-Two things worth flagging now, before they're forgotten:
+Worth flagging about Phase 7, before it's forgotten:
+- **Never tested against real Slack.** Every piece proven so far is a fake
+  HTTP server standing in for `slack.com/api` — there's no real Slack app,
+  bot token, or signing secret in this environment. The signature scheme
+  and Events API shapes are implemented from Slack's published docs, not
+  verified against Slack's actual servers. Worth a real app before
+  depending on this.
+- **The AskUserQuestion relay has never run inside an actual kranq VM.**
+  `kman-ask.py`'s JSON-RPC handshake and its `tools/call` error path are
+  exercised directly (`python3 internal/integration/slack/assets/
+  kman-ask.py` fed synthetic stdin), but the whole point — Claude actually
+  invoking it mid-run inside a Lima VM, blocked on a real Slack thread
+  reply — has no test and can't get one without a real kranq host and a
+  real Slack app at the same time.
+- **A Slack-triggered push requires `spec.Repo` to be a real remote URL.**
+  Unlike `kman push`'s CLI default of `.` ("wherever you're standing"),
+  there's no local checkout to fall back to inside a long-running `kman
+  slack serve` daemon, so the handler refuses up front with a named error
+  if `spec.Repo` isn't set to something `trigger.LooksLikeRemote` accepts,
+  rather than silently resolving against the daemon's own working
+  directory.
+
+Two things worth flagging since Phase 1, before they're forgotten:
 - **Artifact/output retrieval isn't built.** `kman push` reports the
   `KRANQ-RESULT` line (pass/fail, exit code, the verdict ref), but nothing
   yet fetches the ref's actual committed content back over git the way

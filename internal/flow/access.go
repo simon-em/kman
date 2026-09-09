@@ -29,3 +29,12 @@ func (a Access) grants(secretName string) bool {
 	}
 	return false
 }
+
+func (a Access) HasMeta(name string) bool {
+	for _, v := range a.Meta {
+		if v == name {
+			return true
+		}
+	}
+	return false
+}

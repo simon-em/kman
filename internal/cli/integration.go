@@ -1,40 +1,36 @@
 package cli
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/exitcode"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
+	"github.com/simon-em/kman/internal/integration/slack"
 )
 
-func resolveIntegrationCredential(name, userID string) (string, error) {
-	if userID == "" {
-		return "", fmt.Errorf("integration:%s needs an acting user; pass --as or set KMAN_ACTOR", name)
+func runIntegration(env Env, args []string) int {
+	if len(args) < 2 {
+		fmt.Fprintln(env.Stderr, "usage: kman integration bitbucket status [user-id...]\n       kman integration slack status")
+		return exitcode.Usage
 	}
-	switch name {
+	switch args[0] {
 	case "bitbucket":
-		provider, err := bitbucket.FromVault(kmanHome())
-		if err != nil {
-			return "", err
-		}
-		cred, err := provider.Credential(context.Background(), userID)
-		if err != nil {
-			return "", err
-		}
-		return cred.Value, nil
+		return runBitbucketStatus(env, args[1:])
+	case "slack":
+		return runSlackStatus(env, args[1:])
 	default:
-		return "", fmt.Errorf("unknown integration %q", name)
+		fmt.Fprintf(env.Stderr, "kman: unknown integration %q\n", args[0])
+		return exitcode.Usage
 	}
 }
 
-func runIntegration(env Env, args []string) int {
-	if len(args) < 2 || args[0] != "bitbucket" || args[1] != "status" {
+func runBitbucketStatus(env Env, args []string) int {
+	if len(args) < 1 || args[0] != "status" {
 		fmt.Fprintln(env.Stderr, "usage: kman integration bitbucket status [user-id...]")
 		return exitcode.Usage
 	}
-	userIDs := args[2:]
+	userIDs := args[1:]
 	if len(userIDs) == 0 {
 		var err error
 		userIDs, err = config.ListUserIDs(kmanHome())
@@ -56,5 +52,18 @@ func runIntegration(env Env, args []string) int {
 		}
 		fmt.Fprintf(env.Stdout, "%s: %s\n", id, status)
 	}
+	return exitcode.OK
+}
+
+func runSlackStatus(env Env, args []string) int {
+	if len(args) != 1 || args[0] != "status" {
+		fmt.Fprintln(env.Stderr, "usage: kman integration slack status")
+		return exitcode.Usage
+	}
+	if _, err := slack.FromVault(kmanHome()); err != nil {
+		fmt.Fprintf(env.Stdout, "not configured: %v\n", err)
+		return exitcode.OK
+	}
+	fmt.Fprintln(env.Stdout, "configured")
 	return exitcode.OK
 }

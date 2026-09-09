@@ -139,6 +139,63 @@ func TestRenderProjectsToKranqShape(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsFiles(t *testing.T) {
+	data := []byte("name: ok\nfiles:\n  - path: /kman/tool.py\n    mode: \"0755\"\n    content: aGVsbG8=\nsteps:\n  - name: a\n    run: echo hi\n")
+	s, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Files) != 1 || s.Files[0].Path != "/kman/tool.py" {
+		t.Errorf("Files = %+v", s.Files)
+	}
+}
+
+func TestParseRejectsFileWithoutAPath(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - content: aGVsbG8=\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a file with no path")
+	}
+}
+
+func TestParseRejectsFilePathTraversal(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: ../etc/passwd\n    content: aGVsbG8=\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a file path containing ..")
+	}
+}
+
+func TestParseRejectsFileWithInvalidBase64(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: /x\n    content: \"not base64!\"\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for content that is not base64")
+	}
+}
+
+func TestHasMeta(t *testing.T) {
+	a := Access{Meta: []string{"ask", "cron.create"}}
+	if !a.HasMeta("ask") {
+		t.Error(`expected HasMeta("ask") to be true`)
+	}
+	if a.HasMeta("nope") {
+		t.Error(`expected HasMeta("nope") to be false`)
+	}
+}
+
+func TestRenderIncludesFiles(t *testing.T) {
+	data := "name: has-files\nfiles:\n  - path: /kman/tool.py\n    mode: \"0755\"\n    content: aGVsbG8=\nsteps:\n  - name: a\n    run: echo hi\n"
+	s, err := Parse([]byte(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Render(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "/kman/tool.py") {
+		t.Errorf("rendered output missing the file path:\n%s", out)
+	}
+}
+
 func TestRenderExcludesCredentialsAndAccess(t *testing.T) {
 	data := "name: has-creds\ncredentials:\n  BITBUCKET_TOKEN: bitbucket/deploy-key\naccess:\n  credentials: [bitbucket/deploy-key]\n  tools: [bash]\nsteps:\n  - name: a\n    run: echo hi\n"
 	s, err := Parse([]byte(data))
