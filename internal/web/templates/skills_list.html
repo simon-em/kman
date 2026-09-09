@@ -1,0 +1,13 @@
+{{define "skills_list"}}
+<h1>Skills catalog</h1>
+<p>Reference these in a flow's <code>access.skills:</code> list to have kman
+stage the server's file and wire it into every <code>claude:</code> step's
+<code>mcp_servers:</code> automatically. A flow can also declare
+<code>local:&lt;path&gt;</code> for a skill it brings itself via its own
+<code>files:</code> entry (the file's mode must be executable).</p>
+<table border="1" cellpadding="4">
+<tr><th>Name</th><th>Description</th><th>Reference</th></tr>
+{{range .Entries}}<tr><td>{{.Name}}</td><td>{{.Description}}</td><td><code>catalog:{{.Name}}@{{.Ref}}</code></td></tr>
+{{else}}<tr><td colspan="3"><em>no catalog entries</em></td></tr>{{end}}
+</table>
+{{end}}

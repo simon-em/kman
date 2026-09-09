@@ -12,6 +12,7 @@ import (
 	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/kranqpush"
 	"github.com/simon-em/kman/internal/meta"
+	"github.com/simon-em/kman/internal/skills"
 	"github.com/simon-em/kman/internal/vault"
 )
 
@@ -21,6 +22,7 @@ const (
 	StageArgs        Stage = "args"
 	StageCredentials Stage = "credentials"
 	StageMeta        Stage = "meta"
+	StageSkills      Stage = "skills"
 	StageRender      Stage = "render"
 	StageSource      Stage = "source"
 	StagePush        Stage = "push"
@@ -49,6 +51,11 @@ type Options struct {
 func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]string, opts Options) (kranqpush.Result, error) {
 	if opts.KranqURL == "" {
 		return kranqpush.Result{}, fmt.Errorf("no kranq url given")
+	}
+
+	spec, err := skills.Compose(spec)
+	if err != nil {
+		return kranqpush.Result{}, &Error{StageSkills, err}
 	}
 
 	resolvedArgs, err := flow.ResolveArgs(spec, provided)

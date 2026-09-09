@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0-8 (Phase 5 landed and shipped in the kranq repo, not here). See
+Phases 0-9 (Phase 5 landed and shipped in the kranq repo, not here). See
 [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
@@ -320,6 +320,60 @@ a dependency; matching cron's specific DOM/DOW-OR quirk exactly was judged
 not worth the complexity for what this is used for. Known, simple,
 documented — not a bug to "fix" without deciding it's worth the added
 complexity first.
+
+**A `catalog:` skill's ref is a content hash, not a hand-maintained version
+number.** `internal/catalog.register` sets `Entry.Ref` from
+`sha256(Entry.Content)[:12]` at init time — a flow's `access.skills:
+[catalog:bitbucket@<ref>]` only composes if that ref exactly matches the
+catalog's *current* hash for that name. This is what makes "a public
+catalog entry is a name plus a pinned ref, never latest" (docs/design.md)
+literally true rather than aspirational: there's no way to write a flow
+that silently starts running different code because the catalog changed
+underneath it — `internal/skills.Compose` returns a named error instead.
+
+**kman's skills catalog is its own compiled-in registry, not a fetched
+public one, despite docs/design.md's "public catalog" phrasing.** There's
+no network fetch, no external registry service — `internal/catalog`'s
+entries are `go:embed`'d into the binary, the same way kranq embeds
+`assets/mcp/bitbucket-mcp.py`. The catalog's one entry so far
+(`bitbucket`) is a byte-for-byte copy of kranq's own script (verified with
+`diff` when it was copied in) — this is the concrete shape of "supersedes
+kranq's unconditional bitbucket-mcp.py for kman-originated flows": a
+kman-pushed flow gets *kman's own* copy staged via `files:`, not a
+dependency on whatever kranq happened to embed at build time. kranq's own
+embedded copy is untouched and still serves kranq's own CI callers.
+
+**`flow.WithFile`/`WithMCPServer`/`WithDisallowedTool` exist because
+`slack.InjectAskRelay` (Phase 7) and `skills.Compose` (Phase 9) both need
+identical spec-mutation mechanics** — stage a file idempotently by path,
+wire an mcp server into every `claude:` step, append a disallowed tool
+without duplicating it. `InjectAskRelay` was refactored to call these
+instead of keeping its own copy once a second real caller showed up, the
+same "extract only once there's a second copy with a real reason to
+change together" discipline `internal/trigger` was split out under in
+Phase 7. The meta (Slack-specific, needs a live channel/thread) and skills
+(generic, channel-agnostic) dimensions themselves stay conceptually
+separate — only the low-level mutation helpers are shared.
+
+**`kman render` composes `access.skills` but not `access.meta`'s ask
+relay, and that asymmetry is intentional, not a gap.** Skills composition
+needs no runtime context, so `kman render`/`kman push` can and do preview
+it identically; the ask relay needs a real Slack channel and thread `kman
+render` has no way to supply, so it's composed only inside the Slack
+handler at actual trigger time. Before this phase, `kman render` didn't
+compose *anything* (Phase 7 shipped with this gap for the ask relay only,
+which was unavoidable); Phase 9 closed it for the one dimension where
+closing it was actually possible.
+
+**`access.flows` and `access.tools` are still declared-and-validated-only,
+despite docs/design.md's Phase 9 text calling it "the phase where all five
+access dimensions are wired end to end for the first time."** Nothing in
+kman causes one flow to trigger or reference another at runtime — Phase
+8's meta capability is deliberately self-referential only (a flow can
+reschedule *itself*, never a different one) — so there was no existing
+mechanism for `access.flows` to gate, and inventing one on a guess risked
+building the wrong shape. Left as a named, tracked gap (docs/status.md)
+rather than guessed at.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

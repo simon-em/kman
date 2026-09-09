@@ -41,6 +41,7 @@ func init() {
 		"slack":       {"slack serve [--addr HOST:PORT] --kranq-url <url>", "serve the Slack events endpoint (separate from the admin UI)", runSlack},
 		"meta":        {"meta serve [--addr HOST:PORT]", "serve the scoped meta endpoint a pushed VM calls back through", runMeta},
 		"cron":        {"cron set|ls|rm|tick|serve ...", "manage and fire scheduled flow pushes", runCron},
+		"skills":      {"skills ls", "list kman's built-in MCP/skill catalog", runSkills},
 		"help":        {"help [command]", "show usage", runHelp},
 	}
 }

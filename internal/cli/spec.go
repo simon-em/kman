@@ -5,6 +5,7 @@ import (
 
 	"github.com/simon-em/kman/internal/exitcode"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/skills"
 )
 
 func runValidate(env Env, args []string) int {
@@ -34,6 +35,11 @@ func runRender(env Env, args []string) int {
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", args[0], err)
 		return code
+	}
+	spec, err = skills.Compose(spec)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "%s: %v\n", args[0], err)
+		return exitcode.InvalidSpec
 	}
 	out, err := flow.Render(spec)
 	if err != nil {

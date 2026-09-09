@@ -99,7 +99,7 @@ func TestParseRejectsCredentialNotGrantedInAccess(t *testing.T) {
 }
 
 func TestParseAcceptsAccessWithNoCredentials(t *testing.T) {
-	data := []byte("name: ok\naccess:\n  tools: [bash, read]\n  meta: [cron.create]\n  skills: [team/deploy-review]\n  flows: [notify-slack]\nsteps:\n  - name: a\n    run: echo hi\n")
+	data := []byte("name: ok\naccess:\n  tools: [bash, read]\n  meta: [cron.create]\n  skills: [catalog:bitbucket@abc123]\n  flows: [notify-slack]\nsteps:\n  - name: a\n    run: echo hi\n")
 	s, err := Parse(data)
 	if err != nil {
 		t.Fatal(err)
@@ -193,6 +193,45 @@ func TestRenderIncludesFiles(t *testing.T) {
 	}
 	if !strings.Contains(out, "/kman/tool.py") {
 		t.Errorf("rendered output missing the file path:\n%s", out)
+	}
+}
+
+func TestParseAcceptsACatalogSkillRef(t *testing.T) {
+	data := []byte("name: ok\naccess:\n  skills: [catalog:bitbucket@abc123]\nsteps:\n  - name: a\n    run: echo hi\n")
+	s, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Access.Skills) != 1 || s.Access.Skills[0] != "catalog:bitbucket@abc123" {
+		t.Errorf("Skills = %+v", s.Access.Skills)
+	}
+}
+
+func TestParseRejectsAMalformedSkillRef(t *testing.T) {
+	data := []byte("name: bad\naccess:\n  skills: [not-a-valid-ref]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a malformed skill ref")
+	}
+}
+
+func TestParseAcceptsALocalSkillRefMatchingAFile(t *testing.T) {
+	data := []byte("name: ok\nfiles:\n  - path: /kman/tools/my-tool.py\n    mode: \"0755\"\n    content: aGVsbG8=\naccess:\n  skills: [local:/kman/tools/my-tool.py]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseRejectsALocalSkillRefWithNoMatchingFile(t *testing.T) {
+	data := []byte("name: bad\naccess:\n  skills: [local:/kman/tools/my-tool.py]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a local skill ref with no matching files: entry")
+	}
+}
+
+func TestParseRejectsALocalSkillRefWhoseFileIsNotExecutable(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: /kman/tools/my-tool.py\n    mode: \"0644\"\n    content: aGVsbG8=\naccess:\n  skills: [local:/kman/tools/my-tool.py]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a local skill ref whose file mode is not executable")
 	}
 }
 

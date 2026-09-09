@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
@@ -34,7 +35,7 @@ fieldset{margin:1em 0}
 nav{margin-bottom:2em}
 </style></head>
 <body>
-<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a> | <a href="/cron">cron</a> | <a href="/integrations">integrations</a></nav>
+<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a> | <a href="/cron">cron</a> | <a href="/skills">skills</a> | <a href="/integrations">integrations</a></nav>
 {{.Body}}
 </body></html>`
 
@@ -70,6 +71,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /cron/new", s.newCron)
 	mux.HandleFunc("GET /cron/{name}", s.viewCron)
 	mux.HandleFunc("POST /cron/save", s.saveCron)
+	mux.HandleFunc("GET /skills", s.listSkills)
 	mux.HandleFunc("GET /integrations", s.listIntegrations)
 	mux.HandleFunc("GET /integrations/bitbucket/connect", s.bitbucketConnect)
 	mux.HandleFunc("GET /integrations/bitbucket/callback", s.bitbucketCallback)
@@ -460,6 +462,10 @@ func textToArgs(text string) (map[string]string, error) {
 		assignments = append(assignments, line)
 	}
 	return trigger.ParseAssignments(assignments)
+}
+
+func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
+	render(w, "Skills", "skills_list", struct{ Entries []catalog.Entry }{catalog.List()})
 }
 
 type integrationRow struct {

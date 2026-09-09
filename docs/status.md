@@ -424,11 +424,147 @@ Not built, on purpose: meta access and cron (Phase 8).
 
 Not built, on purpose, per docs/design.md: skills/MCP catalogs (Phase 9).
 
+**Phase 9** — declared MCP servers and skills, catalog references:
+- `flow.Access.Skills` entries now have real syntax, checked at parse
+  time by `flow.ParseSkillRef`: `catalog:<name>@<ref>` (a name plus a
+  pinned reference, resolved against `internal/catalog`) or
+  `local:<path>` (a reference to a path the flow's own `files:` already
+  declares). A malformed entry, a `local:` path with no matching `files:`
+  entry, or a `local:` path whose declared mode isn't executable are all
+  parse-time errors — `kman validate` catches all three before anything is
+  pushed. Whether a `catalog:` name/ref actually exists is deliberately
+  *not* checked at parse time, the same way a `credentials:` secret's
+  actual presence in the vault isn't — both are resolved only at
+  composition/push time, since the flow package itself stays decoupled
+  from any specific catalog or vault content.
+- `internal/catalog` — a small built-in registry (`go:embed`'d scripts,
+  `Get`/`List`), **not a fetched-from-the-network registry**: "a public
+  catalog entry (name + pinned ref)" from docs/design.md is delivered here
+  as kman's own compiled-in set of maintained MCP servers, each one's
+  `Ref` derived from a SHA-256 of its own embedded content rather than a
+  hand-maintained version number — so the pin is automatically exact and
+  automatically stale-checked: if the catalog's content for a name ever
+  changes, every flow still referencing the old ref fails composition by
+  name (`Compose` returns "the catalog's X entry is now pinned at Y, not
+  Z"), never silently starts running different code. This is what "which
+  skill did this flow run with must be answerable from a commit alone"
+  means in practice.
+- **The catalog's first, and so far only, entry is kman's own copy of
+  kranq's `bitbucket-mcp.py`**, copied byte-for-byte (verified with `diff`
+  against kranq's `assets/mcp/bitbucket-mcp.py` at the time of copying)
+  into `internal/catalog/assets/`. This is the literal, concrete form of
+  "supersedes kranq's unconditional bitbucket-mcp.py for kman-originated
+  flows" — a kman-pushed flow that wants Bitbucket PR tools now declares
+  `access.skills: [catalog:bitbucket@<ref>]` and gets its *own* copy
+  staged via `files:` at push time, rather than depending on whatever
+  kranq happened to embed at build time from a fixed, fixed-path,
+  every-VM-unconditional asset. kranq's own embedded copy is untouched and
+  still used by kranq's own CI callers — nothing about this phase changes
+  kranq itself.
+- `internal/skills.Compose(spec) (flow.Spec, error)` walks a flow's
+  `access.skills`, and for each entry either (`catalog:`) resolves it
+  against the catalog, verifies the ref matches exactly, stages the
+  entry's content via `flow.WithFile`, and wires `mcp_servers.<name>` via
+  `flow.WithMCPServer` with an explicit `command` kman controls (currently
+  always `python3`, since that's what every catalog entry is written in);
+  or (`local:`) wires `mcp_servers.<name>` with `command` set to the
+  file's *own* path and no separate interpreter argument — kman doesn't
+  know what language a flow author's own file is written in, so the
+  convention is "make it executable (shebang + `0755` mode, already
+  required by parse-time validation) and kman invokes it directly."
+- **`flow.WithFile`/`WithMCPServer`/`WithDisallowedTool` are new,
+  generically useful methods on `flow.Spec` itself**, factored out of what
+  Phase 7's `slack.InjectAskRelay` used to do by hand (copy the Files
+  slice, copy the Steps slice, walk claude steps, merge a map) — both
+  `InjectAskRelay` and this phase's `skills.Compose` need the identical
+  "stage a file, then wire an mcp server into every claude step" mechanics,
+  a real shared reason to change together, so `InjectAskRelay` was
+  refactored to call the same three methods instead of keeping a second,
+  slightly-different copy of that logic. Both are still separate concepts
+  (Slack's `access.meta: [ask]` opts into a specific behavior only Slack
+  triggering can supply real values for — a channel, a thread; skills are
+  generic and channel-agnostic) — only the low-level spec-mutation
+  mechanics are shared, not the meta/skills dimensions themselves.
+- `internal/trigger.Run` calls `skills.Compose` first, before anything
+  else, so **any** push path (`kman push`, Slack, cron) gets a flow's
+  declared skills composed the same way, not just one caller — same
+  "generic, not bolted onto one trigger source" discipline Phase 8's meta
+  token injection already established. A new `trigger.StageSkills` joins
+  the existing stage set, mapped to `exitcode.InvalidSpec` in the CLI,
+  same bucket as a bad arg or an ungranted credential.
+- **`kman render` now composes skills before projecting to kranq shape**,
+  which it didn't for Phase 7's ask relay (that composition needs a live
+  Slack channel/thread, which `kman render` has no way to supply, so it
+  genuinely can't be previewed statically). Skills composition needs no
+  such runtime context, so leaving `kman render`'s output silently
+  incomplete relative to what `kman push` actually sends would have been
+  a real, avoidable gap — a user checking "what does kranq actually see"
+  now gets an accurate answer for the skills dimension. This also means
+  `kman render` fails loudly (exit 65) on a stale/unknown catalog ref,
+  the same way `kman push` would, catching it before anything is pushed.
+- A `/skills` web page listing the catalog (name, description, a
+  copy-pasteable `catalog:<name>@<ref>` reference) and `kman skills ls`
+  for the CLI-only path — read-only in both cases, since the catalog is
+  compiled into the binary, not config-repo content; nothing to save.
+  Deliberately not a structured picker wired into flow editing itself:
+  `flow_edit.html`'s textarea *is* the flow's YAML, unlike the
+  user/group/cron forms, and turning that into a structured editor was
+  judged out of scope for what this phase asked for (a reference list, a
+  link from the flow editor to it).
+- `access.flows` (cross-flow access) and `access.tools` remain declared
+  and referential-integrity-checked only, **not** further enforced by this
+  phase, despite docs/design.md's "this is the phase where all five access
+  dimensions are wired end to end for the first time." No existing
+  mechanism in kman causes one flow to trigger or reference another at
+  runtime (Phase 8's meta capability is deliberately self-referential
+  only — a flow can reschedule itself, never a different one), so
+  "enforcing" `access.flows` would mean inventing a new cross-flow
+  triggering capability the design doc never actually specified the shape
+  of. Building that on a guess risked designing something wrong; it's
+  flagged here as a real, known gap instead — see "Left to do" below.
+- Verified with `go test ./... -race`: `ParseSkillRef` and the new
+  parse-time validations (malformed ref, unmatched `local:` path,
+  non-executable `local:` mode); `flow.WithFile`'s path-based
+  idempotency, `WithMCPServer`'s claude-steps-only scoping, and that
+  neither mutates the receiver; the catalog's ref being genuinely
+  content-derived and stable across calls; `Compose` adding the right
+  file/mcp_servers for a catalog entry, rejecting an unknown name and a
+  stale ref, and wiring a `local:` entry by its own path with no file
+  added; a trigger-level test that captures the *actual* task file content
+  a real `git push` sent to a fake kranq repo and confirms the composed
+  skill's path and `mcp_servers` block are really in it (not just that
+  `Compose` says so in isolation); plus a full manual run with the real
+  binary — `kman skills ls`, a flow referencing the real emitted ref,
+  `kman render` showing the composed YAML with the actual embedded
+  `bitbucket-mcp.py` content (spot-checked as valid Python via
+  `python3 -m py_compile`), `kman validate` rejecting a stale ref and a
+  non-executable `local:` file mode, and a real `kman push` against a
+  fake kranq repo succeeding with the composed spec.
+
 ## Left to do
 
-Everything from Phase 9 onward in [docs/design.md](design.md): declared
-MCP servers and skills with public catalog references, and distribution
-past the Homebrew stub.
+Everything from Phase 10 onward in [docs/design.md](design.md):
+distribution past the Homebrew stub, and the written note on further
+kranq-side cleanup.
+
+Worth flagging about Phase 9, before it's forgotten:
+- **`access.flows` and `access.tools` are still declared-only.** See the
+  bullet above — there's no cross-flow triggering mechanism in kman for
+  `access.flows` to gate, and `access.tools` has had no consumer since
+  Phase 3 defined it. Both are validated for referential shape
+  (`access.flows` entries must name a real flow) but neither restricts
+  anything live. Worth a real decision, not a guess, before either is
+  built.
+- **The catalog has exactly one entry.** The mechanism (`internal/catalog`,
+  `internal/skills.Compose`) is generic and proven, but "a catalog" with
+  one thing in it is a thin proof, not a populated registry. Adding a
+  second entry is now cheap (embed a script, `register` it) whenever a
+  real need names one.
+- **`internal/skills.Compose`'s catalog-entry `Command` is hardcoded to
+  `python3` for every entry** (there's only ever been one to write). A
+  catalog entry in a different language would need `Command` to actually
+  vary per entry — the field already exists on `catalog.Entry` for this
+  reason, just nothing exercises it yet.
 
 Worth flagging about Phase 8, before it's forgotten:
 - **Guest→host reachability from a real kranq VM is still unconfirmed.**

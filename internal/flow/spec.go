@@ -113,12 +113,55 @@ func (s Spec) validate() error {
 			return fmt.Errorf("files[%d] (%s): %w", i, f.Path, err)
 		}
 	}
+	for _, ref := range s.Access.Skills {
+		if err := s.validateSkillRef(ref); err != nil {
+			return err
+		}
+	}
 	for i, step := range s.Steps {
 		if err := step.validate(); err != nil {
 			return fmt.Errorf("step %d (%s): %w", i, step.Name, err)
 		}
 	}
 	return nil
+}
+
+func (s Spec) validateSkillRef(ref string) error {
+	parsed, err := ParseSkillRef(ref)
+	if err != nil {
+		return fmt.Errorf("access.skills: %w", err)
+	}
+	if parsed.Kind != "local" {
+		return nil
+	}
+	f, ok := fileAtPath(s.Files, parsed.Path)
+	if !ok {
+		return fmt.Errorf("access.skills: local:%s does not match any files: entry", parsed.Path)
+	}
+	if !isExecutableMode(f.Mode) {
+		return fmt.Errorf("access.skills: local:%s must have an executable files: mode (e.g. \"0755\")", parsed.Path)
+	}
+	return nil
+}
+
+func fileAtPath(files []File, path string) (File, bool) {
+	for _, f := range files {
+		if f.Path == path {
+			return f, true
+		}
+	}
+	return File{}, false
+}
+
+func isExecutableMode(mode string) bool {
+	if mode == "" {
+		return false
+	}
+	n, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		return false
+	}
+	return n&0o100 != 0
 }
 
 func (f File) validate() error {

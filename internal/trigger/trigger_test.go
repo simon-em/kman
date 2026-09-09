@@ -7,8 +7,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/meta"
 	"github.com/simon-em/kman/internal/vault"
@@ -206,6 +208,76 @@ func TestRunMintsAndInjectsAMetaTokenWhenConfigured(t *testing.T) {
 	}
 	if tok.FlowName != "wants-meta" || tok.UserID != "simon" {
 		t.Errorf("tok = %+v", tok)
+	}
+}
+
+func TestRunFailsAtTheSkillsStageForAnUnknownCatalogEntry(t *testing.T) {
+	home := t.TempDir()
+	spec := flow.Spec{
+		Name:   "wants-a-skill",
+		Access: flow.Access{Skills: []string{"catalog:no-such-skill@abc123"}},
+		Steps:  []flow.Step{{Name: "a", Claude: "do it"}},
+	}
+	_, err := Run(context.Background(), home, spec, nil, Options{KranqURL: "unused"})
+	var te *Error
+	if !errors.As(err, &te) || te.Stage != StageSkills {
+		t.Fatalf("err = %v, want a StageSkills *Error", err)
+	}
+}
+
+func newBareKranqRepoCapturingTaskFile(t *testing.T) (dir, capturedFile string) {
+	t.Helper()
+	dir = t.TempDir()
+	capturedFile = filepath.Join(dir, "captured_task.yaml")
+	hook := fmt.Sprintf(`
+count="${GIT_PUSH_OPTION_COUNT:-0}"
+i=0
+while [ "$i" -lt "$count" ]; do
+  eval "val=\$GIT_PUSH_OPTION_$i"
+  case "$val" in
+    task_file=*) cat "${val#task_file=}" > %s ;;
+  esac
+  i=$((i+1))
+done
+echo "KRANQ-RESULT id=x status=ok exit=0"
+`, capturedFile)
+	mustRunGit(t, dir, "init", "-q", "--bare")
+	mustRunGit(t, dir, "config", "receive.denyCurrentBranch", "ignore")
+	mustRunGit(t, dir, "config", "receive.advertisePushOptions", "true")
+	if err := os.WriteFile(filepath.Join(dir, "hooks", "post-receive"), []byte("#!/bin/sh\n"+hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, capturedFile
+}
+
+func TestRunComposesACatalogSkillIntoTheRenderedTask(t *testing.T) {
+	home := t.TempDir()
+	kranq, capturedFile := newBareKranqRepoCapturingTaskFile(t)
+	source := newSourceRepo(t)
+
+	entry, ok := catalog.Get("bitbucket")
+	if !ok {
+		t.Fatal("expected a bitbucket catalog entry")
+	}
+	spec := flow.Spec{
+		Name:   "pr-review",
+		Access: flow.Access{Skills: []string{"catalog:bitbucket@" + entry.Ref}},
+		Steps:  []flow.Step{{Name: "a", Claude: "review the PR"}},
+	}
+	_, err := Run(context.Background(), home, spec, nil, Options{KranqURL: kranq, Source: source})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rendered, err := os.ReadFile(capturedFile)
+	if err != nil {
+		t.Fatalf("hook did not capture the task file: %v", err)
+	}
+	if !strings.Contains(string(rendered), entry.Path) {
+		t.Errorf("rendered task does not mention the staged skill path %q:\n%s", entry.Path, rendered)
+	}
+	if !strings.Contains(string(rendered), "bitbucket:") {
+		t.Errorf("rendered task does not declare the bitbucket mcp server:\n%s", rendered)
 	}
 }
 

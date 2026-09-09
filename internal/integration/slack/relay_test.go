@@ -1,6 +1,7 @@
 package slack
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/simon-em/kman/internal/flow"
@@ -37,7 +38,7 @@ func TestInjectAskRelayDisablesBuiltinAskUserQuestion(t *testing.T) {
 		Steps: []flow.Step{{Name: "a", Claude: "do something"}},
 	}
 	out := InjectAskRelay(spec, "id", "C1", "")
-	if !containsString(out.Steps[0].DisallowedTools, "AskUserQuestion") {
+	if !slices.Contains(out.Steps[0].DisallowedTools, "AskUserQuestion") {
 		t.Errorf("DisallowedTools = %v, want it to include AskUserQuestion", out.Steps[0].DisallowedTools)
 	}
 }

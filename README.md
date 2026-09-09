@@ -10,17 +10,21 @@ exists as a separate binary from kranq rather than a feature of it.
 
 ## Where this is now
 
-Phases 0-8 (Phase 5, kranq's own `files:` addition, landed and shipped in
+Phases 0-9 (Phase 5, kranq's own `files:` addition, landed and shipped in
 the kranq repo, not here): CLI dispatch, the flow schema, config-repo
 loading (with a local-directory fallback for testing), the git mechanics
 to push a flow at kranq, an encrypted secrets store a flow can bind a
 credential to, users/groups/grants (enforced for Slack-triggered pushes
 via `CanTrigger`), a web UI over all of it, a Bitbucket OAuth integration
 for per-user credentials, a Slack integration (allow-listed `@kman run
-<flow>` triggering and an AskUserQuestion relay), and meta access + cron:
-a flow can be granted `access.meta: [cron.create]` to schedule itself
+<flow>` triggering and an AskUserQuestion relay), meta access + cron (a
+flow can be granted `access.meta: [cron.create]` to schedule itself
 through a scoped callback endpoint, without ever holding a kranq
-credential. See [docs/status.md](docs/status.md) for the phase-by-phase
+credential), and a built-in MCP/skills catalog: a flow can declare
+`access.skills: [catalog:bitbucket@<ref>]` and kman stages that server's
+implementation and wires it into every `claude:` step itself, or
+`local:<path>` to wire in a tool the flow brings along in its own
+`files:`. See [docs/status.md](docs/status.md) for the phase-by-phase
 state.
 
 ```sh
@@ -50,6 +54,7 @@ kman cron ls
 kman cron rm <name>
 kman cron tick --kranq-url <url>        # fire whatever's due once, then exit
 kman cron serve --kranq-url <url> [--interval 1m]   # loop, calling the same tick
+kman skills ls                          # list the built-in MCP/skill catalog
 ```
 
 To use Bitbucket OAuth, register an OAuth consumer in your Bitbucket
@@ -105,6 +110,28 @@ curl -X POST "$KMAN_META_URL/meta/cron" \
 token's own flow — the request can't name a different one. From there,
 `kman cron serve` (or `kman cron tick` on a real cron/launchd timer) picks
 it up like any admin-authored entry.
+
+A flow that wants MCP tool access declares it in `access.skills:` instead
+of hand-writing `mcp_servers:` and hoping kranq happens to have the right
+thing embedded:
+
+```yaml
+access:
+  skills: [catalog:bitbucket@1ab934c12689]
+steps:
+  - name: review
+    claude: review the open PR and leave comments
+```
+
+`kman skills ls` (or the `/skills` web page) lists what's in the catalog
+and the exact reference to paste. `kman push`/`kman render` stage the
+server's implementation via `files:` and add the `mcp_servers:` entry
+automatically — the ref is a pin, not "latest": if the catalog's own copy
+of a skill ever changes, a flow still naming the old ref fails loudly
+instead of silently running different code. A flow can also bring its own
+tool via `access.skills: [local:/path/to/tool]`, referencing a `files:`
+entry it already declares (the file's mode must be executable); kman
+wires it in by its own path, no catalog involved.
 
 ## Commands
 

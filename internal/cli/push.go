@@ -80,7 +80,7 @@ func pushExitCode(err error) int {
 	var te *trigger.Error
 	if errors.As(err, &te) {
 		switch te.Stage {
-		case trigger.StageArgs, trigger.StageCredentials, trigger.StageMeta:
+		case trigger.StageArgs, trigger.StageCredentials, trigger.StageMeta, trigger.StageSkills:
 			return exitcode.InvalidSpec
 		case trigger.StageSource:
 			return exitcode.InternalError
