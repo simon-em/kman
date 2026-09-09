@@ -20,12 +20,13 @@ for per-user credentials, a Slack integration (allow-listed `@kman run
 <flow>` triggering and an AskUserQuestion relay), meta access + cron (a
 flow can be granted `access.meta: [cron.create]` to schedule itself
 through a scoped callback endpoint, without ever holding a kranq
-credential), and a built-in MCP/skills catalog: a flow can declare
-`access.skills: [catalog:bitbucket@<ref>]` and kman stages that server's
-implementation and wires it into every `claude:` step itself, or
-`local:<path>` to wire in a tool the flow brings along in its own
-`files:`. See [docs/status.md](docs/status.md) for the phase-by-phase
-state.
+credential), and a built-in skills/MCP catalog: a flow can declare
+`access.skills: [catalog:bitbucket@<ref>]` for a plain-markdown skill
+kman stages for Claude to read and act on directly, `local:<path>` for
+the same with a skill the flow brings along itself, or a `local:<path>`
+pointing at an executable for a real MCP server kman wires into every
+`claude:` step. See [docs/status.md](docs/status.md) for the
+phase-by-phase state.
 
 ```sh
 kman version
@@ -111,8 +112,8 @@ token's own flow — the request can't name a different one. From there,
 `kman cron serve` (or `kman cron tick` on a real cron/launchd timer) picks
 it up like any admin-authored entry.
 
-A flow that wants MCP tool access declares it in `access.skills:` instead
-of hand-writing `mcp_servers:` and hoping kranq happens to have the right
+A flow that wants tool access declares it in `access.skills:` instead of
+hand-writing `mcp_servers:` and hoping kranq happens to have the right
 thing embedded:
 
 ```yaml
@@ -125,13 +126,41 @@ steps:
 
 `kman skills ls` (or the `/skills` web page) lists what's in the catalog
 and the exact reference to paste. `kman push`/`kman render` stage the
-server's implementation via `files:` and add the `mcp_servers:` entry
-automatically — the ref is a pin, not "latest": if the catalog's own copy
-of a skill ever changes, a flow still naming the old ref fails loudly
-instead of silently running different code. A flow can also bring its own
-tool via `access.skills: [local:/path/to/tool]`, referencing a `files:`
-entry it already declares (the file's mode must be executable); kman
-wires it in by its own path, no catalog involved.
+skill's content via `files:` automatically; the ref is a pin, not
+"latest" — if the catalog's own copy of a skill ever changes, a flow
+still naming the old ref fails loudly instead of silently running
+different code.
+
+A catalog (or `local:`) entry is one of two kinds. Most skills, including
+the built-in `bitbucket` one, are plain markdown: a `SKILL.md` staged at
+`.claude/skills/<name>/SKILL.md`, no process, no `mcp_servers:` entry,
+just instructions Claude reads and acts on with `Bash`/`curl` the same way
+it would follow any other skill. A `local:<path>` ref pointing at an
+*executable* file (mode must be `0755` or similar) instead gets wired as
+a real MCP server, `command` set to the file's own path — for the rarer
+case where a flow genuinely needs a structured tool-call interface rather
+than instructions.
+
+Writing a skill by hand doesn't require base64: any `files:` entry can use
+`text:` instead of `content:` for plain UTF-8 content —
+
+```yaml
+files:
+  - path: .claude/skills/my-thing/SKILL.md
+    text: |
+      ---
+      name: my-thing
+      description: how to do my thing
+      ---
+      # My thing
+      ...
+access:
+  skills: [local:.claude/skills/my-thing/SKILL.md]
+```
+
+kman encodes it to what kranq's own wire format needs at push time; the
+flow's own YAML never has to carry a base64 blob for something that's
+just text.
 
 ## Commands
 

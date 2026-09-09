@@ -334,14 +334,52 @@ underneath it — `internal/skills.Compose` returns a named error instead.
 **kman's skills catalog is its own compiled-in registry, not a fetched
 public one, despite docs/design.md's "public catalog" phrasing.** There's
 no network fetch, no external registry service — `internal/catalog`'s
-entries are `go:embed`'d into the binary, the same way kranq embeds
-`assets/mcp/bitbucket-mcp.py`. The catalog's one entry so far
-(`bitbucket`) is a byte-for-byte copy of kranq's own script (verified with
-`diff` when it was copied in) — this is the concrete shape of "supersedes
-kranq's unconditional bitbucket-mcp.py for kman-originated flows": a
-kman-pushed flow gets *kman's own* copy staged via `files:`, not a
-dependency on whatever kranq happened to embed at build time. kranq's own
-embedded copy is untouched and still serves kranq's own CI callers.
+entries are `go:embed`'d into the binary. This is the concrete shape of
+"supersedes kranq's unconditional bitbucket-mcp.py for kman-originated
+flows": a kman-pushed flow gets kman's *own* skill staged via `files:`,
+not a dependency on whatever kranq happened to embed at build time.
+kranq's own embedded `assets/mcp/bitbucket-mcp.py` is untouched and still
+serves kranq's own CI callers.
+
+**`catalog.Entry` has a `Kind`: `KindMCP` (a real process, wired into
+`mcp_servers:`) or `KindDoc` (plain text Claude reads and acts on, no
+process at all).** The catalog's `bitbucket` entry started as `KindMCP`
+(a Python script mirroring kranq's own `bitbucket-mcp.py`) and was
+rewritten to `KindDoc` (`internal/catalog/assets/bitbucket.md`, a real
+`SKILL.md`) at the maintainer's explicit direction, replacing the MCP
+entry rather than keeping both — not every tool needs a structured
+tool-call interface; Bitbucket's REST API is simple enough that
+instructions plus `curl` are enough. `internal/skills.Compose` only adds
+an `mcp_servers:` entry for `KindMCP`; `KindDoc` is staged via
+`flow.WithFile` and nothing else. The same kind split applies to
+`local:` refs, decided by the maintainer's own suggestion: a path ending
+`.md` is treated as `KindDoc` (no mode requirement, no MCP wiring),
+anything else is treated as an executable (must be `0755`-style,
+`command` set to its own path).
+
+**`internal/skills.Compose` takes a `Lookup` function parameter
+(`func(name string) (catalog.Entry, bool)`) instead of calling
+`catalog.Get` directly.** Every real caller still just passes
+`catalog.Get` (its signature matches exactly, no wrapper needed) — this
+exists purely for testability. Once the catalog's only real entry became
+`KindDoc`, there was no permanent `KindMCP` entry left to exercise
+`Compose`'s MCP branch through, and `catalog.entries` is an unexported
+package var no other package's tests can seed. `internal/skills`'s own
+tests build a synthetic in-memory catalog instead of mutating global
+state or requiring a real MCP entry to exist just to stay covered.
+
+**`flow.File` has a `Text` field, sibling to `Content`, exactly one of the
+two required.** `Content` stays base64 (kranq's own wire format never
+changed and never needs to); `Text` is literal UTF-8, meant for exactly
+what it looks like in YAML: `text: |` followed by real markdown, no
+pre-encoding step a human has to run first. `File.Base64Content()` is the
+single place that reconciles the two — returns `Content` as-is or encodes
+`Text` on the way to kranq — called once, at the end of `Render`, into a
+small kranq-shaped `kranqFile{Path,Mode,Content}` wire type distinct from
+`flow.File` itself (they used to be the same type; they diverged the
+moment kman's own authoring convenience and kranq's wire format needed to
+say different things). Not skill-specific: any `files:` entry can use
+`text:` instead of `content:`.
 
 **`flow.WithFile`/`WithMCPServer`/`WithDisallowedTool` exist because
 `slack.InjectAskRelay` (Phase 7) and `skills.Compose` (Phase 9) both need

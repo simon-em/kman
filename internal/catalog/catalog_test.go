@@ -7,7 +7,7 @@ func TestGetBitbucket(t *testing.T) {
 	if !ok {
 		t.Fatal("expected a bitbucket entry")
 	}
-	if e.Command != "python3" || e.Path == "" || len(e.Content) == 0 {
+	if e.Kind != KindDoc || e.Path == "" || len(e.Content) == 0 {
 		t.Errorf("e = %+v", e)
 	}
 	if e.Ref == "" {

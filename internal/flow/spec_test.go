@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"encoding/base64"
 	"os"
 	"strings"
 	"testing"
@@ -171,6 +172,54 @@ func TestParseRejectsFileWithInvalidBase64(t *testing.T) {
 	}
 }
 
+func TestParseAcceptsPlainTextFileContent(t *testing.T) {
+	data := []byte("name: ok\nfiles:\n  - path: /kman/skills/x/SKILL.md\n    text: |\n      # hello\n      world\nsteps:\n  - name: a\n    run: echo hi\n")
+	s, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Files) != 1 || s.Files[0].Text == "" || s.Files[0].Content != "" {
+		t.Errorf("Files = %+v", s.Files)
+	}
+}
+
+func TestParseRejectsAFileWithNeitherContentNorText(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: /x\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a file with neither content nor text")
+	}
+}
+
+func TestParseRejectsAFileWithBothContentAndText(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: /x\n    content: aGVsbG8=\n    text: hello\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for a file with both content and text")
+	}
+}
+
+func TestParseRejectsTextOverTheSizeLimit(t *testing.T) {
+	data := []byte("name: bad\nfiles:\n  - path: /x\n    text: \"" + strings.Repeat("a", MaxFileSize+1) + "\"\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err == nil {
+		t.Fatal("expected an error for text over the size limit")
+	}
+}
+
+func TestBase64ContentEncodesText(t *testing.T) {
+	f := File{Path: "/x", Text: "hello"}
+	got := f.Base64Content()
+	want := base64.StdEncoding.EncodeToString([]byte("hello"))
+	if got != want {
+		t.Errorf("Base64Content() = %q, want %q", got, want)
+	}
+}
+
+func TestBase64ContentPassesThroughContent(t *testing.T) {
+	f := File{Path: "/x", Content: "aGVsbG8="}
+	if got := f.Base64Content(); got != "aGVsbG8=" {
+		t.Errorf("Base64Content() = %q, want aGVsbG8=", got)
+	}
+}
+
 func TestHasMeta(t *testing.T) {
 	a := Access{Meta: []string{"ask", "cron.create"}}
 	if !a.HasMeta("ask") {
@@ -232,6 +281,13 @@ func TestParseRejectsALocalSkillRefWhoseFileIsNotExecutable(t *testing.T) {
 	data := []byte("name: bad\nfiles:\n  - path: /kman/tools/my-tool.py\n    mode: \"0644\"\n    content: aGVsbG8=\naccess:\n  skills: [local:/kman/tools/my-tool.py]\nsteps:\n  - name: a\n    run: echo hi\n")
 	if _, err := Parse(data); err == nil {
 		t.Fatal("expected an error for a local skill ref whose file mode is not executable")
+	}
+}
+
+func TestParseAcceptsALocalMarkdownSkillRefWithNoExecutableMode(t *testing.T) {
+	data := []byte("name: ok\nfiles:\n  - path: /kman/skills/x/SKILL.md\n    text: instructions\naccess:\n  skills: [local:/kman/skills/x/SKILL.md]\nsteps:\n  - name: a\n    run: echo hi\n")
+	if _, err := Parse(data); err != nil {
+		t.Fatal(err)
 	}
 }
 

@@ -250,7 +250,7 @@ echo "KRANQ-RESULT id=x status=ok exit=0"
 	return dir, capturedFile
 }
 
-func TestRunComposesACatalogSkillIntoTheRenderedTask(t *testing.T) {
+func TestRunComposesADocSkillIntoTheRenderedTask(t *testing.T) {
 	home := t.TempDir()
 	kranq, capturedFile := newBareKranqRepoCapturingTaskFile(t)
 	source := newSourceRepo(t)
@@ -276,8 +276,8 @@ func TestRunComposesACatalogSkillIntoTheRenderedTask(t *testing.T) {
 	if !strings.Contains(string(rendered), entry.Path) {
 		t.Errorf("rendered task does not mention the staged skill path %q:\n%s", entry.Path, rendered)
 	}
-	if !strings.Contains(string(rendered), "bitbucket:") {
-		t.Errorf("rendered task does not declare the bitbucket mcp server:\n%s", rendered)
+	if strings.Contains(string(rendered), "mcp_servers:") {
+		t.Errorf("a doc skill should not add an mcp_servers block:\n%s", rendered)
 	}
 }
 

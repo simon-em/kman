@@ -48,6 +48,14 @@ type File struct {
 	Path    string `yaml:"path"`
 	Mode    string `yaml:"mode"`
 	Content string `yaml:"content"`
+	Text    string `yaml:"text"`
+}
+
+func (f File) Base64Content() string {
+	if f.Content != "" {
+		return f.Content
+	}
+	return base64.StdEncoding.EncodeToString([]byte(f.Text))
 }
 
 type Spec struct {
@@ -138,10 +146,17 @@ func (s Spec) validateSkillRef(ref string) error {
 	if !ok {
 		return fmt.Errorf("access.skills: local:%s does not match any files: entry", parsed.Path)
 	}
+	if isMarkdownPath(parsed.Path) {
+		return nil
+	}
 	if !isExecutableMode(f.Mode) {
 		return fmt.Errorf("access.skills: local:%s must have an executable files: mode (e.g. \"0755\")", parsed.Path)
 	}
 	return nil
+}
+
+func isMarkdownPath(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".md")
 }
 
 func fileAtPath(files []File, path string) (File, bool) {
@@ -176,12 +191,24 @@ func (f File) validate() error {
 			return fmt.Errorf("mode %q is not valid octal", f.Mode)
 		}
 	}
-	decoded, err := base64.StdEncoding.DecodeString(f.Content)
-	if err != nil {
-		return fmt.Errorf("content is not base64: %w", err)
+	if f.Content == "" && f.Text == "" {
+		return errors.New("needs either content or text")
 	}
-	if len(decoded) > MaxFileSize {
-		return fmt.Errorf("is %d bytes, over the %d byte limit", len(decoded), MaxFileSize)
+	if f.Content != "" && f.Text != "" {
+		return errors.New("content and text are mutually exclusive")
+	}
+	if f.Content != "" {
+		decoded, err := base64.StdEncoding.DecodeString(f.Content)
+		if err != nil {
+			return fmt.Errorf("content is not base64: %w", err)
+		}
+		if len(decoded) > MaxFileSize {
+			return fmt.Errorf("is %d bytes, over the %d byte limit", len(decoded), MaxFileSize)
+		}
+		return nil
+	}
+	if len(f.Text) > MaxFileSize {
+		return fmt.Errorf("is %d bytes, over the %d byte limit", len(f.Text), MaxFileSize)
 	}
 	return nil
 }

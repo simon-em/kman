@@ -16,6 +16,12 @@ type kranqStep struct {
 	ContinueOn      bool                 `yaml:"continue_on_error,omitempty"`
 }
 
+type kranqFile struct {
+	Path    string `yaml:"path"`
+	Mode    string `yaml:"mode"`
+	Content string `yaml:"content"`
+}
+
 type kranqTask struct {
 	Name      string            `yaml:"name"`
 	Repo      string            `yaml:"repo,omitempty"`
@@ -24,11 +30,15 @@ type kranqTask struct {
 	Kranqfile string            `yaml:"kranqfile,omitempty"`
 	Resources Resources         `yaml:"resources,omitempty"`
 	Env       map[string]string `yaml:"env,omitempty"`
-	Files     []File            `yaml:"files,omitempty"`
+	Files     []kranqFile       `yaml:"files,omitempty"`
 	Steps     []kranqStep       `yaml:"steps"`
 }
 
 func Render(s Spec) (string, error) {
+	files := make([]kranqFile, len(s.Files))
+	for i, f := range s.Files {
+		files[i] = kranqFile{Path: f.Path, Mode: f.Mode, Content: f.Base64Content()}
+	}
 	t := kranqTask{
 		Name:      s.Name,
 		Repo:      s.Repo,
@@ -37,7 +47,7 @@ func Render(s Spec) (string, error) {
 		Kranqfile: s.Kranqfile,
 		Resources: s.Resources,
 		Env:       s.Env,
-		Files:     s.Files,
+		Files:     files,
 		Steps:     make([]kranqStep, len(s.Steps)),
 	}
 	for i, step := range s.Steps {

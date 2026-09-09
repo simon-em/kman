@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/gitcache"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
@@ -53,7 +54,7 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 		return kranqpush.Result{}, fmt.Errorf("no kranq url given")
 	}
 
-	spec, err := skills.Compose(spec)
+	spec, err := skills.Compose(spec, catalog.Get)
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageSkills, err}
 	}

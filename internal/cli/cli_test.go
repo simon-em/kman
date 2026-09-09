@@ -90,9 +90,6 @@ func TestRenderComposesACatalogSkill(t *testing.T) {
 	if !bytes.Contains([]byte(stdout), []byte(entry.Path)) {
 		t.Errorf("rendered output missing the staged skill path %q:\n%s", entry.Path, stdout)
 	}
-	if !bytes.Contains([]byte(stdout), []byte("bitbucket:")) {
-		t.Errorf("rendered output missing the bitbucket mcp server:\n%s", stdout)
-	}
 }
 
 func TestRenderFailsForAStaleCatalogRef(t *testing.T) {

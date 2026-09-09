@@ -7,27 +7,33 @@ import (
 	"sort"
 )
 
+const (
+	KindMCP = "mcp"
+	KindDoc = "doc"
+)
+
 type Entry struct {
 	Name        string
 	Description string
+	Kind        string
 	Command     string
 	Path        string
 	Content     []byte
 	Ref         string
 }
 
-//go:embed assets/bitbucket-mcp.py
-var bitbucketScript []byte
+//go:embed assets/bitbucket.md
+var bitbucketSkill []byte
 
 var entries = map[string]Entry{}
 
 func init() {
 	register(Entry{
 		Name:        "bitbucket",
-		Description: "Bitbucket pull request tools (list/get PRs, diff, comments) over the REST API.",
-		Command:     "python3",
-		Path:        "/kman/skills/bitbucket-mcp.py",
-		Content:     bitbucketScript,
+		Description: "Bitbucket pull request tools (list/get PRs, diff, comments) over the REST API, as a skill Claude reads and acts on directly.",
+		Kind:        KindDoc,
+		Path:        ".claude/skills/bitbucket/SKILL.md",
+		Content:     bitbucketSkill,
 	})
 }
 

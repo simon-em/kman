@@ -541,6 +541,63 @@ Not built, on purpose, per docs/design.md: skills/MCP catalogs (Phase 9).
   non-executable `local:` file mode, and a real `kman push` against a
   fake kranq repo succeeding with the composed spec.
 
+**Phase 9 addendum** — pure-text skills, not just MCP servers. Raised
+directly by the maintainer right after Phase 9 landed: "sometimes just a
+skill md file is fine and we don't need a python script at all… I even
+think bitbucket management could simply be a skill where we describe how
+to use bitbucket." The original Phase 9 design conflated "skill" with
+"MCP server" — every catalog/`local:` entry got wired into `mcp_servers:`
+whether or not that made sense. Fixed:
+- `catalog.Entry` gained `Kind` (`KindMCP` / `KindDoc`). A `KindDoc` entry
+  is staged via `flow.WithFile` only — no `mcp_servers:` entry, nothing to
+  execute. **The catalog's `bitbucket` entry was rewritten from a Python
+  MCP server to a plain `SKILL.md`** (`internal/catalog/assets/
+  bitbucket.md`, with the real Claude Code skill frontmatter shape: a
+  `name`/`description` header, then markdown instructions for using
+  Bitbucket's REST API via `curl` and `$BITBUCKET_TOKEN`) — replacing the
+  MCP entry rather than adding a second one alongside it, at the
+  maintainer's explicit direction. `internal/catalog/assets/
+  bitbucket-mcp.py` was deleted, not kept dormant.
+- `internal/skills.Compose` decides per `local:` ref by extension: a path
+  ending `.md` is treated as a doc, composed with no `mcp_servers:` wiring
+  at all (the flow author's own `files:` entry is left exactly as they
+  wrote it); anything else is still treated as an executable, wired by its
+  own path exactly as before. `flow.Spec.validateSkillRef`'s
+  executable-mode requirement for `local:` refs is skipped for `.md`
+  paths for the same reason — a doc has no business needing `chmod +x`.
+- **`flow.File` gained a `Text` field, sibling to `Content`, exactly one
+  of the two required.** This was the maintainer's second point in the
+  same message: hand-writing a `SKILL.md` into a flow's own `files:`
+  block shouldn't require pre-encoding it to base64 by hand. `Text` is
+  the file's literal UTF-8 content (natural in YAML's block-scalar
+  syntax, `text: |`); `flow.File.Base64Content()` returns `Content`
+  as-is or encodes `Text` on demand, and `Render` calls it once, at the
+  very last step, into a small `kranqFile{Path,Mode,Content}` wire type —
+  **kranq's own task schema is completely unchanged**, it never sees
+  anything but base64 `content:`, same as always. This authoring
+  convenience is not skill-specific: any `files:` entry can use `text:`
+  instead of `content:` now, e.g. a plain config file a task needs.
+- `internal/skills.Compose` gained a `Lookup` parameter
+  (`func(name string) (catalog.Entry, bool)`, satisfied directly by
+  `catalog.Get` at every real call site) instead of calling the global
+  catalog directly. This was needed for testing, not for production
+  behavior: once the catalog's only entry became `KindDoc`, there was no
+  real catalog entry left to exercise `Compose`'s `KindMCP` branch, and
+  the catalog's own registry (`entries`) is an unexported package var no
+  other package's tests can seed. `internal/skills`'s tests now construct
+  a synthetic in-memory catalog to prove the MCP-kind path still works,
+  without touching global state or needing a real MCP catalog entry to
+  exist just to keep it covered.
+- Verified with `go test ./... -race` across `flow`/`catalog`/`skills`/
+  `trigger`/`cli` (all previously-passing tests that assumed bitbucket was
+  MCP were updated to assert the new doc behavior, not skipped or
+  deleted), plus a manual run with the real binary: `kman render` on the
+  bitbucket entry decoding, byte for byte, back to the exact markdown
+  source; and a from-scratch flow whose own `files:` entry uses `text:`
+  directly (no base64 anywhere in the authored YAML) validating,
+  rendering with correctly-encoded `content:`, and pushing successfully
+  through a real fake-kranq repo.
+
 ## Left to do
 
 Everything from Phase 10 onward in [docs/design.md](design.md):
@@ -555,16 +612,15 @@ Worth flagging about Phase 9, before it's forgotten:
   (`access.flows` entries must name a real flow) but neither restricts
   anything live. Worth a real decision, not a guess, before either is
   built.
-- **The catalog has exactly one entry.** The mechanism (`internal/catalog`,
-  `internal/skills.Compose`) is generic and proven, but "a catalog" with
-  one thing in it is a thin proof, not a populated registry. Adding a
-  second entry is now cheap (embed a script, `register` it) whenever a
-  real need names one.
-- **`internal/skills.Compose`'s catalog-entry `Command` is hardcoded to
-  `python3` for every entry** (there's only ever been one to write). A
-  catalog entry in a different language would need `Command` to actually
-  vary per entry — the field already exists on `catalog.Entry` for this
-  reason, just nothing exercises it yet.
+- **The catalog has exactly one entry, and it's `KindDoc`, not
+  `KindMCP`.** The mechanism (`internal/catalog`, `internal/skills.
+  Compose`) is generic and proven for both kinds, but `KindMCP`'s
+  composition path is currently exercised only by `internal/skills`'
+  own unit tests against a synthetic in-memory catalog entry (see the
+  Phase 9 addendum above) and by a `local:` executable skill ref, never
+  by a real, permanent catalog entry. Adding either kind of second entry
+  is cheap (embed the file, `register` it with the right `Kind`) whenever
+  a real need names one.
 
 Worth flagging about Phase 8, before it's forgotten:
 - **Guest→host reachability from a real kranq VM is still unconfirmed.**
