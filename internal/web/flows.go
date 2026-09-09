@@ -54,7 +54,10 @@ func (s *Server) flowFormContext() (repos []reporegistry.Repo, flows []string, s
 	if err != nil {
 		return
 	}
-	skills = catalog.List()
+	skills, err = config.ListSkills(s.Home)
+	if err != nil {
+		return
+	}
 	if v, verr := vault.Open(s.Home); verr == nil {
 		secrets, _ = v.List()
 	}

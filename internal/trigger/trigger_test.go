@@ -415,6 +415,44 @@ func TestRunComposesADocSkillIntoTheRenderedTask(t *testing.T) {
 	}
 }
 
+func TestRunComposesACustomConfigRepoSkill(t *testing.T) {
+	home := t.TempDir()
+	kranq, capturedFile := newBareKranqRepoCapturingTaskFile(t)
+	source := newSourceRepo(t)
+
+	stored := catalog.StoredEntry{
+		Name: "my-skill",
+		Kind: catalog.KindDoc,
+		Path: ".claude/skills/my-skill/SKILL.md",
+		Text: "# my custom skill",
+	}
+	if err := config.SaveSkill(home, stored, ""); err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := config.GetSkill(home, "my-skill")
+	if !ok {
+		t.Fatal("expected the just-saved custom skill to be findable")
+	}
+
+	spec := flow.Spec{
+		Name:   "pr-review",
+		Access: flow.Access{Skills: []string{"catalog:my-skill@" + entry.Ref}},
+		Steps:  []flow.Step{{Name: "a", Claude: "review the PR"}},
+	}
+	_, err := Run(context.Background(), home, spec, nil, Options{KranqURL: kranq, Source: source})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rendered, err := os.ReadFile(capturedFile)
+	if err != nil {
+		t.Fatalf("hook did not capture the task file: %v", err)
+	}
+	if !strings.Contains(string(rendered), "my-skill/SKILL.md") {
+		t.Errorf("rendered task does not mention the custom skill's staged path:\n%s", rendered)
+	}
+}
+
 func TestSourceAuthHeaderIsEmptyForANonBitbucketHost(t *testing.T) {
 	if got := sourceAuthHeader(t.TempDir(), "https://github.com/example/repo.git"); got != "" {
 		t.Errorf("sourceAuthHeader = %q, want empty for a non-bitbucket.org host", got)

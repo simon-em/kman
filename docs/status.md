@@ -551,7 +551,25 @@ Not built, on purpose, per docs/design.md: skills/MCP catalogs (Phase 9).
   (the flow editor was still a YAML textarea then) — just a reference
   list plus a link from the flow editor to it. **Since superseded**: the
   flow editor is now structured, and its skills field is exactly that
-  picker, a `<datalist>` sourced live from `catalog.List()`.
+  picker, a `<datalist>` sourced live from `config.ListSkills`.
+  **Also since superseded**: the catalog is no longer compiled-in only.
+  `catalog.StoredEntry` + `config.SaveSkill`/`LoadSkill`/`ListCustomSkills`
+  make a skill or MCP server real config-repo content — `kman skills
+  set|rm`, or `/skills/new` in the web UI, which also has a "fetch from a
+  public repo" step (a plain URL, or an ordinary `github.com/.../blob/...`
+  link auto-rewritten to raw content) that fills the form for review, not
+  auto-save. Fetch-once, at add time, never again — preserves the
+  catalog's own pin-not-latest guarantee for custom entries the same way
+  it already held for built-in ones. `internal/catalog` itself is
+  otherwise unchanged (`Get`/`List` stay built-in-only, no `home`
+  parameter); the home-aware merge lives in `internal/config` instead,
+  specifically to keep the dependency one-directional (`config` → 
+  `catalog`) and avoid a cycle. A custom entry can never shadow a
+  built-in name — rejected at `StoredEntry.Validate`, checked at every
+  entry point (CLI, web, and re-parsing a stored entry off disk).
+  Verified live: a real fetch from `github.com/simon-em/kman`'s own
+  public README, and `kman skills ls` listing a built-in and a custom
+  entry side by side after a real save through the running server.
 - `access.flows` (cross-flow access) and `access.tools` remain declared
   and referential-integrity-checked only, **not** further enforced by this
   phase, despite docs/design.md's "this is the phase where all five access

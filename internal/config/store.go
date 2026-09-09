@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/reporegistry"
@@ -77,6 +78,64 @@ func ListRepos(home string) ([]reporegistry.Repo, error) {
 	return repos, nil
 }
 
+func LoadSkill(home, name string) (catalog.StoredEntry, error) {
+	data, err := os.ReadFile(skillPath(home, name))
+	if err != nil {
+		return catalog.StoredEntry{}, err
+	}
+	return catalog.ParseStoredEntry(data)
+}
+
+func ListCustomSkills(home string) ([]catalog.Entry, error) {
+	names, err := ListSkillNames(home)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]catalog.Entry, 0, len(names))
+	for _, name := range names {
+		stored, err := LoadSkill(home, name)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := stored.ToEntry()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+func ListSkills(home string) ([]catalog.Entry, error) {
+	out := catalog.List()
+	custom, err := ListCustomSkills(home)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, custom...)
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+func GetSkill(home, name string) (catalog.Entry, bool) {
+	if e, ok := catalog.Get(name); ok {
+		return e, true
+	}
+	stored, err := LoadSkill(home, name)
+	if err != nil {
+		return catalog.Entry{}, false
+	}
+	entry, err := stored.ToEntry()
+	if err != nil {
+		return catalog.Entry{}, false
+	}
+	return entry, true
+}
+
+func SkillLookup(home string) func(name string) (catalog.Entry, bool) {
+	return func(name string) (catalog.Entry, bool) { return GetSkill(home, name) }
+}
+
 func SaveFlow(home string, spec flow.Spec, author string) error {
 	if err := writeYAML(flowPath(home, spec.Name), spec); err != nil {
 		return err
@@ -126,6 +185,20 @@ func RemoveRepo(home, name, author string) error {
 	return commit(Dir(home), fmt.Sprintf("repo %s: removed", name), author)
 }
 
+func SaveSkill(home string, e catalog.StoredEntry, author string) error {
+	if err := writeYAML(skillPath(home, e.Name), e); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("skill %s: saved", e.Name), author)
+}
+
+func RemoveSkill(home, name, author string) error {
+	if err := os.Remove(skillPath(home, name)); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("skill %s: removed", name), author)
+}
+
 func ListFlowNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "flows"))
 }
@@ -146,6 +219,10 @@ func ListRepoNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "repos"))
 }
 
+func ListSkillNames(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "skills"))
+}
+
 func flowPath(home, name string) string {
 	return filepath.Join(Dir(home), "flows", name+".yaml")
 }
@@ -164,6 +241,10 @@ func cronPath(home, name string) string {
 
 func repoPath(home, name string) string {
 	return filepath.Join(Dir(home), "repos", name+".yaml")
+}
+
+func skillPath(home, name string) string {
+	return filepath.Join(Dir(home), "skills", name+".yaml")
 }
 
 func listYAMLBasenames(dir string) ([]string, error) {

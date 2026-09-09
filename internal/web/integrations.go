@@ -4,15 +4,10 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/integration/slack"
 )
-
-func (s *Server) listSkills(w http.ResponseWriter, r *http.Request) {
-	render(w, "Skills", "skills_list", struct{ Entries []catalog.Entry }{catalog.List()})
-}
 
 type integrationRow struct {
 	UserID    string

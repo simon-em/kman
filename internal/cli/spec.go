@@ -3,7 +3,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/simon-em/kman/internal/catalog"
+	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/exitcode"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/skills"
@@ -37,7 +37,7 @@ func runRender(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", args[0], err)
 		return code
 	}
-	spec, err = skills.Compose(spec, catalog.Get)
+	spec, err = skills.Compose(spec, config.SkillLookup(kmanHome()))
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "%s: %v\n", args[0], err)
 		return exitcode.InvalidSpec

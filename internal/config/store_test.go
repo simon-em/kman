@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/catalog"
 	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/reporegistry"
@@ -369,5 +370,82 @@ func TestPushIfConfiguredSurfacesAnErrorWhenTheRemoteIsUnreachable(t *testing.T)
 
 	if _, err := PushIfConfigured(home); err == nil {
 		t.Fatal("expected an error for an unreachable remote")
+	}
+}
+
+func TestSaveSkillRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	e := catalog.StoredEntry{Name: "my-skill", Kind: catalog.KindDoc, Path: ".claude/skills/my-skill/SKILL.md", Text: "hello"}
+	if err := SaveSkill(home, e, ""); err != nil {
+		t.Fatalf("SaveSkill: %v", err)
+	}
+	got, err := LoadSkill(home, "my-skill")
+	if err != nil {
+		t.Fatalf("LoadSkill: %v", err)
+	}
+	if got.Text != "hello" {
+		t.Errorf("Text = %q", got.Text)
+	}
+}
+
+func TestRemoveSkill(t *testing.T) {
+	home := t.TempDir()
+	e := catalog.StoredEntry{Name: "my-skill", Kind: catalog.KindDoc, Path: "x", Text: "hi"}
+	if err := SaveSkill(home, e, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveSkill(home, "my-skill", ""); err != nil {
+		t.Fatalf("RemoveSkill: %v", err)
+	}
+	if _, err := LoadSkill(home, "my-skill"); !os.IsNotExist(err) {
+		t.Errorf("LoadSkill after remove: %v, want IsNotExist", err)
+	}
+}
+
+func TestListSkillsIncludesBuiltinsAndCustom(t *testing.T) {
+	home := t.TempDir()
+	e := catalog.StoredEntry{Name: "my-skill", Kind: catalog.KindDoc, Path: "x", Text: "hi"}
+	if err := SaveSkill(home, e, ""); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := ListSkills(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name] = true
+	}
+	if !names["bitbucket"] {
+		t.Error("expected the built-in bitbucket entry to be included")
+	}
+	if !names["my-skill"] {
+		t.Error("expected the custom my-skill entry to be included")
+	}
+}
+
+func TestGetSkillFindsBuiltinAndCustom(t *testing.T) {
+	home := t.TempDir()
+	e := catalog.StoredEntry{Name: "my-skill", Kind: catalog.KindDoc, Path: "x", Text: "hi"}
+	if err := SaveSkill(home, e, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := GetSkill(home, "bitbucket"); !ok {
+		t.Error("expected GetSkill to find the built-in bitbucket entry")
+	}
+	if _, ok := GetSkill(home, "my-skill"); !ok {
+		t.Error("expected GetSkill to find the custom my-skill entry")
+	}
+	if _, ok := GetSkill(home, "no-such-skill"); ok {
+		t.Error("expected GetSkill to report false for an unknown entry")
+	}
+}
+
+func TestSkillLookupMatchesGetSkill(t *testing.T) {
+	home := t.TempDir()
+	lookup := SkillLookup(home)
+	e, ok := lookup("bitbucket")
+	if !ok || e.Name != "bitbucket" {
+		t.Errorf("lookup(bitbucket) = %+v, %v", e, ok)
 	}
 }

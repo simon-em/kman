@@ -58,7 +58,9 @@ kman cron ls
 kman cron rm <name>
 kman cron tick --kranq-url <url>        # fire whatever's due once, then exit
 kman cron serve --kranq-url <url> [--interval 1m]   # loop, calling the same tick
-kman skills ls                          # list the built-in MCP/skill catalog
+kman skills ls                          # list the built-in and custom MCP/skill catalog
+kman skills set <name> --kind doc|mcp --path <path> [--command <cmd>] [--description <desc>] [--source-url <url>] [--file <path>]   # content from stdin if --file is omitted
+kman skills rm <name>
 ```
 
 `kman web` is a real editor, not just flow/user/group/cron viewers: every
@@ -234,6 +236,19 @@ it would follow any other skill. A `local:<path>` ref pointing at an
 a real MCP server, `command` set to the file's own path — for the rarer
 case where a flow genuinely needs a structured tool-call interface rather
 than instructions.
+
+The catalog isn't only what's compiled into the binary. `kman skills set`
+(or `/skills/new` in the web UI) adds a real catalog entry backed by
+config-repo content — pushed and versioned like everything else in
+`~/.kman/config`, referenced the same way (`catalog:<name>@<ref>`), and
+composed by the exact same code path as a built-in one. The web form has
+a "fetch from a public repo" step: paste a URL (a plain raw URL, or an
+ordinary `github.com/.../blob/...` link — it's rewritten to the raw form
+for you) and it fetches the content into the form for you to review and
+edit before saving anything; nothing is fetched again after that, so a
+flow pinning `catalog:name@ref` stays exactly what it pinned even if the
+original source later changes. A name already used by a built-in entry is
+rejected, so a custom entry can never silently shadow one.
 
 Writing a skill by hand doesn't require base64: any `files:` entry can use
 `text:` instead of `content:` for plain UTF-8 content —

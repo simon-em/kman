@@ -711,3 +711,43 @@ case the schema itself was built to make uncommon.
 own validation both read it, so they cannot drift.** `validPermissionModes`
 (the lookup map `flow.Parse` actually checks against) is now derived from
 `PermissionModes` at package-init time, not a second hand-maintained list.
+
+**The catalog's built-in entries (`internal/catalog`) and its config-repo
+entries live in a deliberately one-directional dependency: `internal/config`
+imports `internal/catalog`, never the reverse.** `catalog.Get`/`catalog.List`
+are untouched — built-ins only, no `home` parameter, exactly as before this
+existed. All the "home-aware, merge built-in with config-repo content"
+logic (`ListSkills`, `GetSkill`, `SkillLookup`) lives in `internal/config`
+instead, alongside every other resource's Save/Load. Putting it there
+rather than growing `catalog.Get`/`List` a `home` parameter kept the
+existing 5 call sites of the built-in-only functions (catalog's own tests)
+untouched, and avoided the cycle a `catalog` → `config` import back-edge
+would have created the moment `catalog` needed `config`'s git-commit
+machinery to persist a custom entry.
+
+**A custom skill/MCP entry is fetched from a public URL once, at add
+time — never again, never live at push time.** `POST /skills/fetch-preview`
+fetches and re-renders the *same* edit form with the content filled in,
+under review, unsaved; only a subsequent, separate `POST /skills/save`
+persists anything, as config-repo content from then on. This preserves
+the catalog's existing pin-not-latest guarantee (`catalog:name@ref`) for
+custom entries exactly as it already worked for built-in ones — if fetch
+re-ran on every push instead, a flow's pinned ref could point at content
+that no longer matches what's live at the source URL, or a compromised
+upstream could silently change what every push actually runs.
+
+**The skill editor's "Fetch" button is a second `formaction` on the one
+real form, not a second `<form>` or any JavaScript.** An early draft used
+two separate `<form>` elements (one to fetch, one to save); submitting
+the fetch form lost whatever the admin had already typed into the save
+form's other fields, since a browser only submits the form actually
+submitted. One `<form action="/skills/save">` with a `<button
+formaction="/skills/fetch-preview">` fetches using the exact same,
+currently-typed field values and keeps them on the re-render — no data
+loss, no JS, consistent with every other page in `kman web`.
+
+**A custom catalog entry can never shadow a built-in one by name.**
+`StoredEntry.Validate` rejects a name `catalog.Get` already recognizes,
+checked both when parsing a stored entry back off disk and when the CLI
+(`kman skills set`) or the web form saves a new one — enforced at every
+entry point, not just one.

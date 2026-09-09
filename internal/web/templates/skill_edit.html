@@ -1,0 +1,33 @@
+{{define "skill_edit"}}
+<h1>Skill{{if not .IsNew}}: {{.Entry.Name}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+
+<form method="post" action="/skills/save">
+<input type="hidden" name="is_new" value="{{if .IsNew}}true{{else}}false{{end}}">
+
+<fieldset><legend>Fetch from a public repo <span class="hint">optional — populates Content below for you to review before saving</span></legend>
+<div class="row">
+<input type="text" name="fetch_url" value="{{.FetchURL}}" placeholder="https://github.com/owner/repo/blob/main/SKILL.md, or any raw URL">
+<button type="submit" formaction="/skills/fetch-preview">Fetch</button>
+</div>
+</fieldset>
+
+<label>Name <input type="text" name="name" value="{{.Entry.Name}}" {{if not .IsNew}}readonly{{end}} placeholder="my-skill"></label>
+<label>Description <input type="text" name="description" value="{{.Entry.Description}}" placeholder="what this skill or MCP server does"></label>
+<label>Kind
+<select name="kind">
+<option value="doc" {{if eq .Entry.Kind "doc"}}selected{{end}}>doc (a plain-markdown skill Claude reads directly)</option>
+<option value="mcp" {{if eq .Entry.Kind "mcp"}}selected{{end}}>mcp (an executable, wired in as a real MCP server)</option>
+</select>
+</label>
+<label>Path <input type="text" name="path" value="{{.Entry.Path}}" placeholder=".claude/skills/my-skill/SKILL.md, or a script path for mcp"></label>
+<label>Command <input type="text" name="command" value="{{.Entry.Command}}" placeholder="mcp only: interpreter, e.g. python3 — blank for a self-executing shebang script"></label>
+<label>Source URL <input type="text" name="source_url" value="{{.Entry.SourceURL}}" placeholder="optional, where this came from"></label>
+<label>Content
+<textarea name="text" rows="20">{{.Entry.Text}}</textarea>
+</label>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/skills">back to skills</a></p>
+{{end}}
