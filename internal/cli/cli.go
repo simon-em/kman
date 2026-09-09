@@ -39,6 +39,8 @@ func init() {
 		"web":         {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},
 		"integration": {"integration bitbucket|slack status ...", "check integration connection status", runIntegration},
 		"slack":       {"slack serve [--addr HOST:PORT] --kranq-url <url>", "serve the Slack events endpoint (separate from the admin UI)", runSlack},
+		"meta":        {"meta serve [--addr HOST:PORT]", "serve the scoped meta endpoint a pushed VM calls back through", runMeta},
+		"cron":        {"cron set|ls|rm|tick|serve ...", "manage and fire scheduled flow pushes", runCron},
 		"help":        {"help [command]", "show usage", runHelp},
 	}
 }

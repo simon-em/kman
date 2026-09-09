@@ -86,3 +86,26 @@ func TestLoadRejectsAFlowAccessReferencingAnUnknownFlow(t *testing.T) {
 		t.Fatal("expected an error for access.flows referencing an unknown flow")
 	}
 }
+
+func TestLoadIncludesCronEntries(t *testing.T) {
+	home := t.TempDir()
+	writeConfigFile(t, home, "flows/report.yaml", "name: report\nsteps:\n  - name: a\n    run: echo hi\n")
+	writeConfigFile(t, home, "cron/nightly.yaml", "name: nightly\nflow: report\nschedule: \"0 6 * * *\"\n")
+
+	cfg, err := Load(home, "")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(cfg.Cron) != 1 || cfg.Cron[0].Flow != "report" {
+		t.Errorf("Cron = %+v", cfg.Cron)
+	}
+}
+
+func TestLoadRejectsACronEntryReferencingAnUnknownFlow(t *testing.T) {
+	home := t.TempDir()
+	writeConfigFile(t, home, "cron/nightly.yaml", "name: nightly\nflow: no-such-flow\nschedule: \"0 6 * * *\"\n")
+
+	if _, err := Load(home, ""); err == nil {
+		t.Fatal("expected an error for a cron entry referencing an unknown flow")
+	}
+}

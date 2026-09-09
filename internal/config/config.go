@@ -7,12 +7,14 @@ import (
 	"path/filepath"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 )
 
 type Config struct {
 	Flows  []flow.Spec
 	Access access.Registry
+	Cron   []cron.Entry
 }
 
 func Dir(home string) string {

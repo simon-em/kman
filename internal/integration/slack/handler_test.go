@@ -139,7 +139,7 @@ func TestHandlerAnswersURLVerification(t *testing.T) {
 	slackSrv, _ := newFakeSlackServer(t)
 	secret := configureSlack(t, home, slackSrv.URL)
 
-	h := NewHandler(home, "unused")
+	h := NewHandler(home, "unused", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -164,7 +164,7 @@ func TestHandlerRejectsAnInvalidSignature(t *testing.T) {
 	slackSrv, _ := newFakeSlackServer(t)
 	configureSlack(t, home, slackSrv.URL)
 
-	h := NewHandler(home, "unused")
+	h := NewHandler(home, "unused", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -202,7 +202,7 @@ func TestHandlerTriggersAnAllowedFlowAndRepliesWithTheResult(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewHandler(home, kranq)
+	h := NewHandler(home, kranq, "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 
@@ -244,7 +244,7 @@ func TestHandlerRefusesAFlowTheUserIsNotGrantedFor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h := NewHandler(home, "unused")
+	h := NewHandler(home, "unused", "")
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 

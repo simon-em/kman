@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 	"gopkg.in/yaml.v3"
 )
@@ -40,6 +41,14 @@ func LoadGroup(home, name string) (access.Group, error) {
 	return access.ParseGroup(data)
 }
 
+func LoadCronEntry(home, name string) (cron.Entry, error) {
+	data, err := os.ReadFile(cronPath(home, name))
+	if err != nil {
+		return cron.Entry{}, err
+	}
+	return cron.ParseEntry(data)
+}
+
 func SaveFlow(home string, spec flow.Spec, author string) error {
 	if err := writeYAML(flowPath(home, spec.Name), spec); err != nil {
 		return err
@@ -61,6 +70,20 @@ func SaveGroup(home string, g access.Group, author string) error {
 	return commit(Dir(home), fmt.Sprintf("group %s: saved", g.Name), author)
 }
 
+func SaveCronEntry(home string, e cron.Entry, author string) error {
+	if err := writeYAML(cronPath(home, e.Name), e); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("cron %s: saved", e.Name), author)
+}
+
+func RemoveCronEntry(home, name, author string) error {
+	if err := os.Remove(cronPath(home, name)); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("cron %s: removed", name), author)
+}
+
 func ListFlowNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "flows"))
 }
@@ -73,6 +96,10 @@ func ListGroupNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "groups"))
 }
 
+func ListCronNames(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "cron"))
+}
+
 func flowPath(home, name string) string {
 	return filepath.Join(Dir(home), "flows", name+".yaml")
 }
@@ -83,6 +110,10 @@ func userPath(home, id string) string {
 
 func groupPath(home, name string) string {
 	return filepath.Join(Dir(home), "groups", name+".yaml")
+}
+
+func cronPath(home, name string) string {
+	return filepath.Join(Dir(home), "cron", name+".yaml")
 }
 
 func listYAMLBasenames(dir string) ([]string, error) {

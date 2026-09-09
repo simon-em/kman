@@ -330,11 +330,134 @@ relay:
 
 Not built, on purpose: meta access and cron (Phase 8).
 
+**Phase 8** — meta access and cron:
+- `internal/meta` — `Store` mints a short-lived (`DefaultTokenTTL` = 2h),
+  capability-scoped `Token{Value, FlowName, UserID, Grants, ExpiresAt}`,
+  persisted to `$KMAN_HOME/meta-tokens.json` (0600) rather than kept
+  in-memory, because the minting process (`kman push`, a one-shot CLI
+  invocation, or `kman slack serve`) and the validating process (`kman meta
+  serve`) are routinely different OS processes. `Server` exposes exactly
+  one endpoint, `POST /meta/cron`, authenticated by `Authorization: Bearer
+  <token>` — **the created cron entry's `flow` field is always the token's
+  own `FlowName`, never anything the request body sends**, which is what
+  makes this "the self-referential capability" for real: a flow can
+  schedule *itself*, never an arbitrary other flow, no matter what a
+  compromised or buggy VM-side caller puts in the request.
+- **"Access back to kranq" narrowed to "back to kman," exactly per
+  docs/design.md.** The VM never sees a kranq credential; it sees a
+  kman-minted bearer token good only for the capabilities the *pushed
+  flow's own* `access.meta` list named, re-checked by `Store.Validate` on
+  every call. When a call succeeds, **kman** (not the VM) performs the
+  actual `config.SaveCronEntry` git commit with kman's own attribution.
+- `internal/trigger.Run` mints and injects the token itself, generically —
+  not Slack-specific, unlike the ask relay — so any push path (`kman
+  push`, Slack, and now cron's own re-firing of a flow) gets it the same
+  way whenever `spec.Access.Meta` is non-empty. `KMAN_META_TOKEN`/
+  `KMAN_META_URL` travel via the same `Options.ExtraEnv` push-option path
+  the Slack bot token already used, so a meta token never gets baked into
+  the rendered task YAML either. Missing `--meta-url`/`$KMAN_META_URL` is
+  a loud stderr warning and the push proceeds without the token (a flow
+  can declare `access.meta` defensively before an operator has wired cron
+  up); missing `--as`/`$KMAN_ACTOR` on a flow that *does* have a meta URL
+  configured is a hard `StageMeta` error, same shape as the existing
+  `StageArgs`/`StageCredentials`/`StageSource`/`StagePush` stages — there's
+  no one to attribute a minted token to otherwise.
+- `internal/cron` — `Entry{Name, Flow, Schedule, Args, CreatedBy}` plus a
+  hand-rolled 5-field (`minute hour dom month dow`) schedule parser/matcher
+  (`*`, `*/N`, `A-B`, comma lists) — deliberately not a dependency, and
+  deliberately simpler than real cron: **DOM and DOW are ANDed, not
+  OR'd like POSIX cron's documented special case.** Config-repo storage
+  (`config/cron/<name>.yaml`) follows the exact `Load*/Save*/List*` shape
+  Phase 0's flows and Phase 3's users/groups already established, plus one
+  new thing none of those had: `RemoveCronEntry`, because a stale schedule
+  left with no way to cancel it is an operational hazard a flow/user/group
+  edit form isn't (those still have no delete path anywhere in kman).
+  `config.Load`'s referential-integrity pass now also rejects a cron entry
+  naming an unknown flow, the same way it already does for a grant or an
+  `access.flows` reference.
+- **Cron is deliberately small, exactly per docs/design.md**: `kman cron
+  tick --kranq-url <url>` loads the config once, matches every entry's
+  schedule against `time.Now()`, and fires each due one with `Detach:
+  true` (so a slow kranq run never stalls the rest of the tick) — no
+  admission control, no bidding, and a missed tick is never retroactively
+  caught up (each tick only ever asks "is *now* due", never "what did I
+  miss"). `kman cron serve --interval 1m` is a thin loop around the exact
+  same `tickCron` function `kman cron tick` calls once — the one-shot form
+  exists so `tickCron` is testable without a long-running process, and so
+  an operator can drive kman's cron off real OS cron/launchd instead of a
+  daemon if they'd rather.
+- A cron-fired flow needs `spec.Repo` to be a real remote URL, same
+  constraint and same reasoning as Phase 7's Slack-triggered push: `kman
+  cron serve` is a long-running daemon with no "wherever you're standing"
+  checkout to fall back to, so `tickCron` skips (with a named stderr
+  line) any entry whose flow isn't `trigger.LooksLikeRemote`, rather than
+  resolving against the daemon's own cwd.
+- `kman meta serve [--addr] ` is its own **third** separate listener,
+  alongside `kman web` and `kman slack serve`, for the same reason those
+  two are already split: it needs to be reachable from somewhere `kman
+  web`'s login-less admin UI must not be — in this case, a kranq-booted
+  VM, not the public internet. `kman cron serve`/`kman cron tick` need no
+  inbound exposure at all (same as `kman push`), so they aren't a fourth
+  listener, just another CLI command.
+- A `/cron` web panel (list, and a new/edit form: name, flow dropdown,
+  schedule, args as `NAME=VALUE` lines) — the design doc's own "shows up
+  in the web UI's cron editor the same as one an admin typed by hand" is
+  literal: `POST /cron/save` calls the identical `config.SaveCronEntry`
+  a meta-endpoint-created entry goes through, no separate code path.
+- Verified with `go test ./... -race` (unit tests for the schedule parser
+  covering `*`, steps, ranges, comma lists and weekday matching; the token
+  store's mint/validate/expire/prune behavior including that a token
+  persists across separate `Store` instances backed by the same file; the
+  meta server rejecting a missing/wrong-capability token and, pointedly,
+  a test asserting the created entry's `flow` is the token's own even when
+  the request body names a different one; `tickCron` firing a due entry
+  and skipping a not-yet-due one and one whose flow has no remote repo)
+  plus a full manual, no-mocks run: a real `kman meta serve` process, a
+  real fake-kranq `post-receive` hook that reads `KMAN_META_TOKEN`/
+  `KMAN_META_URL` out of its push options and `curl`s the meta endpoint
+  exactly the way a VM-side tool call would, `kman push --meta-url ...`
+  minting the token that made that callback succeed, `kman cron ls`
+  showing the resulting entry correctly attributed to the acting user, and
+  `kman cron tick` firing it through the same fake kranq repo — the entire
+  mint → inject → callback → validate → create → tick chain observed
+  working end to end.
+
+Not built, on purpose, per docs/design.md: skills/MCP catalogs (Phase 9).
+
 ## Left to do
 
-Everything from Phase 8 onward in [docs/design.md](design.md): meta
-access, cron, declared MCP/skills access, and distribution past the
-Homebrew stub.
+Everything from Phase 9 onward in [docs/design.md](design.md): declared
+MCP servers and skills with public catalog references, and distribution
+past the Homebrew stub.
+
+Worth flagging about Phase 8, before it's forgotten:
+- **Guest→host reachability from a real kranq VM is still unconfirmed.**
+  docs/design.md flagged this explicitly as needing a probe before the
+  phase was finalized: whether a kranq-booted VM (per `assets/lima.yaml`)
+  can actually reach a host address like `host.lima.internal:8082` under
+  Lima's `vz` networking. Nothing in this session can run a real Lima VM
+  to check. Everything meta-related is proven up to the boundary of "a
+  process with the right token calls the endpoint" — the fake-kranq hook
+  in the manual smoke test stands in for that call exactly the way a real
+  VM's tool invocation would, but it isn't one. `--meta-url`/
+  `$KMAN_META_URL` is deliberately just a plain configured address (no
+  Lima-specific detection) precisely so the fallback docs/design.md named
+  — plain internet/LAN egress to a kman endpoint on its own address, the
+  same posture kranq's own git server already has — works without any
+  code change once this is confirmed either way.
+- **The meta token store has no locking.** `Store.Mint`/`Validate` do a
+  plain read-modify-write of `meta-tokens.json`, so two concurrent mints
+  (or a mint racing a validate's prune) could lose a write. Same
+  known-and-accepted limitation `internal/vault` already has, for the same
+  reason: a single-operator tool doesn't need a `flock` for this yet.
+- **`kman cron serve`'s interval is real-time, not simulated**, so nothing
+  exercises what happens across a restart that spans a missed tick, or two
+  `kman cron serve` processes pointed at the same `$KMAN_HOME` racing each
+  other. The design's "a missed tick is not retroactively retried" is true
+  by construction (each tick only ever checks "is *now* due"), but running
+  two schedulers against the same config has the same undocumented-race
+  character as Phase 4's "two `kman web` processes" caveat below — not
+  how this is meant to be run, but nothing currently stops it.
 
 Worth flagging about Phase 7, before it's forgotten:
 - **Never tested against real Slack.** Every piece proven so far is a fake

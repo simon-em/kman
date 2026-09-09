@@ -10,7 +10,7 @@ and why.
 
 ## Where this is now
 
-Phases 0-7 (Phase 5 landed and shipped in the kranq repo, not here). See
+Phases 0-8 (Phase 5 landed and shipped in the kranq repo, not here). See
 [docs/status.md](docs/status.md) for what's done and
 [docs/design.md](docs/design.md) for the full phase-by-phase plan.
 
@@ -264,6 +264,62 @@ stdin, both the handshake and a `tools/call` error path), but has never run
 for real inside a kranq VM with a real Claude Code process talking to it
 over stdio; that needs a real kranq host and a real Slack app at the same
 time, neither of which exists in this environment yet.
+
+**A minted meta token's `flow` is fixed at mint time and cannot be
+overridden by the caller.** `meta.Server.createCron` builds the saved
+`cron.Entry{Flow: tok.FlowName, ...}` from the *token*, not from anything
+in the request body — a request body naming a different flow is silently
+ignored for that field. This is what "the self-referential capability"
+(docs/design.md) actually means in code: a flow can schedule itself, never
+an arbitrary other flow, no matter what a compromised or buggy VM-side
+caller sends.
+
+**Meta tokens are file-backed (`$KMAN_HOME/meta-tokens.json`, 0600), not
+in-memory.** `kman push` (a one-shot CLI process) mints the token; `kman
+meta serve` (a separate long-running process) validates it later. An
+in-memory map in either process wouldn't be visible to the other. Same
+tradeoff `internal/vault` already made for secrets, extended to a second
+thing: no locking beyond plain read-modify-write, acceptable for a
+single-operator tool, not safe under real concurrent mints.
+
+**`internal/trigger.Run` mints and injects `KMAN_META_TOKEN`/
+`KMAN_META_URL` itself, generically, whenever `spec.Access.Meta` is
+non-empty** — unlike the Slack-specific ask relay, meta access has nothing
+to do with Slack, so it belongs in the shared push path both `kman push`
+and every trigger source go through, not bolted onto one caller. Missing
+`--meta-url`/`$KMAN_META_URL` is a loud stderr warning and the push still
+proceeds (a flow can declare `access.meta` before an operator has wired
+cron up); missing `--as`/`$KMAN_ACTOR` on a flow that *does* have a meta
+URL configured is a hard `trigger.StageMeta` error — there's no one to
+attribute a minted token to otherwise.
+
+**`kman meta serve` is a third separate listener, alongside `kman web` and
+`kman slack serve`, for the identical reason those two are split**: each
+needs to be reachable from somewhere the others must not be. `kman web`
+stays loopback-only (no login); `kman slack serve` needs the public
+internet; `kman meta serve` needs to be reachable from a kranq-booted VM,
+which — per docs/design.md's own caveat — is unconfirmed to even be
+possible under Lima's networking in this environment. `kman cron
+serve`/`kman cron tick` need no inbound exposure at all, so cron stays a
+plain CLI command, not a fourth listener.
+
+**`kman cron tick` and `kman cron serve` share one function
+(`tickCron`), not two implementations of the same loop.** `serve` is
+`for { tickCron(...); sleep(interval) }`; `tick` calls it once and exits.
+The one-shot form exists specifically so the core logic is testable
+without a long-running process, and so an operator can drive kman's cron
+off real OS cron/launchd instead of running a kman daemon, if they'd
+rather — matching kranq's own general preference for "an external tool's
+scheduling is someone else's already-solved problem" where it reasonably
+applies.
+
+**`internal/cron`'s schedule matcher ANDs day-of-month and day-of-week,
+unlike real POSIX cron's documented OR special-case.** A hand-rolled
+5-field parser (`*`, `*/N`, `A-B`, comma lists) was worth writing to avoid
+a dependency; matching cron's specific DOM/DOW-OR quirk exactly was judged
+not worth the complexity for what this is used for. Known, simple,
+documented — not a bug to "fix" without deciding it's worth the added
+complexity first.
 
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —

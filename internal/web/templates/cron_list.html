@@ -1,0 +1,9 @@
+{{define "cron_list"}}
+<h1>Cron</h1>
+<p><a href="/cron/new">+ new schedule</a></p>
+<table border="1" cellpadding="4">
+<tr><th>Name</th><th>Flow</th><th>Schedule</th><th>Created by</th></tr>
+{{range .Entries}}<tr><td><a href="/cron/{{.Name}}">{{.Name}}</a></td><td>{{.Flow}}</td><td><code>{{.Schedule}}</code></td><td>{{.CreatedBy}}</td></tr>
+{{else}}<tr><td colspan="4"><em>no schedules yet</em></td></tr>{{end}}
+</table>
+{{end}}

@@ -11,6 +11,7 @@ import (
 	"github.com/simon-em/kman/internal/gitcache"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/kranqpush"
+	"github.com/simon-em/kman/internal/meta"
 	"github.com/simon-em/kman/internal/vault"
 )
 
@@ -19,6 +20,7 @@ type Stage string
 const (
 	StageArgs        Stage = "args"
 	StageCredentials Stage = "credentials"
+	StageMeta        Stage = "meta"
 	StageRender      Stage = "render"
 	StageSource      Stage = "source"
 	StagePush        Stage = "push"
@@ -40,6 +42,7 @@ type Options struct {
 	Keep     string
 	Detach   bool
 	AsUser   string
+	MetaURL  string
 	ExtraEnv map[string]string
 }
 
@@ -56,7 +59,11 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageCredentials, err}
 	}
-	pushEnv, err := MergeEnv(resolvedArgs, resolvedCreds, opts.ExtraEnv)
+	metaEnv, err := resolveMetaEnv(home, spec, opts)
+	if err != nil {
+		return kranqpush.Result{}, &Error{StageMeta, err}
+	}
+	pushEnv, err := MergeEnv(resolvedArgs, resolvedCreds, opts.ExtraEnv, metaEnv)
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageArgs, err}
 	}
@@ -94,6 +101,27 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 		return kranqpush.Result{}, &Error{StagePush, err}
 	}
 	return result, nil
+}
+
+func resolveMetaEnv(home string, spec flow.Spec, opts Options) (map[string]string, error) {
+	if len(spec.Access.Meta) == 0 {
+		return nil, nil
+	}
+	if opts.MetaURL == "" {
+		fmt.Fprintf(os.Stderr, "kman: warning: flow %q requests meta access (%v) but no meta URL is configured (--meta-url or $KMAN_META_URL); KMAN_META_TOKEN not injected\n", spec.Name, spec.Access.Meta)
+		return nil, nil
+	}
+	if opts.AsUser == "" {
+		return nil, fmt.Errorf("flow %q requests meta access; pass --as or set KMAN_ACTOR so a minted meta token can be attributed", spec.Name)
+	}
+	tok, err := meta.Open(home).Mint(spec.Name, opts.AsUser, spec.Access.Meta, meta.DefaultTokenTTL)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		"KMAN_META_TOKEN": tok.Value,
+		"KMAN_META_URL":   opts.MetaURL,
+	}, nil
 }
 
 func ResolveCredentials(home string, spec flow.Spec, userID string) (map[string]string, error) {

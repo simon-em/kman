@@ -1,0 +1,15 @@
+{{define "cron_edit"}}
+<h1>Cron entry{{if not .IsNew}}: {{.Entry.Name}}{{else}} (new){{end}}</h1>
+{{if .Error}}<p class="error">{{.Error}}</p>{{end}}
+<form method="post" action="/cron/save">
+<label>Name <input type="text" name="name" value="{{.Entry.Name}}" {{if not .IsNew}}readonly{{end}}></label><br>
+<label>Flow <select name="flow">
+{{range .AllFlows}}<option value="{{.}}" {{if eq . $.Entry.Flow}}selected{{end}}>{{.}}</option>{{end}}
+</select></label><br>
+<label>Schedule <input type="text" name="schedule" value="{{.Entry.Schedule}}" placeholder="0 6 * * *"></label><br>
+<label>Args<br><textarea name="args" rows="4" placeholder="NAME=VALUE">{{.ArgsText}}</textarea></label><br>
+<label>Acting as <input type="text" name="actor" value="{{.Actor}}" placeholder="your name, for the commit"></label>
+<button type="submit">Save</button>
+</form>
+<p><a href="/cron">back to cron</a></p>
+{{end}}

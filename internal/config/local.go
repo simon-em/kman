@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 )
 
@@ -15,6 +16,10 @@ func loadLocal(dir string) (Config, error) {
 		return Config{}, err
 	}
 	registry, err := loadRegistry(dir)
+	if err != nil {
+		return Config{}, err
+	}
+	entries, err := loadCronEntries(filepath.Join(dir, "cron"))
 	if err != nil {
 		return Config{}, err
 	}
@@ -28,7 +33,10 @@ func loadLocal(dir string) (Config, error) {
 	if err := validateFlowReferences(flows, knownFlows); err != nil {
 		return Config{}, err
 	}
-	return Config{Flows: flows, Access: registry}, nil
+	if err := validateCronReferences(entries, knownFlows); err != nil {
+		return Config{}, err
+	}
+	return Config{Flows: flows, Access: registry, Cron: entries}, nil
 }
 
 func loadFlows(dir string) ([]flow.Spec, error) {
@@ -67,6 +75,42 @@ func validateFlowReferences(flows []flow.Spec, knownFlows map[string]bool) error
 		}
 	}
 	return nil
+}
+
+func validateCronReferences(entries []cron.Entry, knownFlows map[string]bool) error {
+	for _, e := range entries {
+		if !knownFlows[e.Flow] {
+			return fmt.Errorf("cron entry %s: references unknown flow %q", e.Name, e.Flow)
+		}
+	}
+	return nil
+}
+
+func loadCronEntries(dir string) ([]cron.Entry, error) {
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []cron.Entry
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".yaml" {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := cron.ParseEntry(data)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		out = append(out, entry)
+	}
+	return out, nil
 }
 
 func loadRegistry(dir string) (access.Registry, error) {

@@ -1,11 +1,13 @@
 package config
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/simon-em/kman/internal/access"
+	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 )
 
@@ -71,6 +73,38 @@ func TestSaveFlowRoundTrip(t *testing.T) {
 	}
 	if got.Name != "deploy" {
 		t.Errorf("Name = %q, want deploy", got.Name)
+	}
+}
+
+func TestSaveCronEntryRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	if err := SaveFlow(home, flow.Spec{Name: "report", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}, ""); err != nil {
+		t.Fatal(err)
+	}
+	e := cron.Entry{Name: "nightly", Flow: "report", Schedule: "0 6 * * *", CreatedBy: "simon"}
+	if err := SaveCronEntry(home, e, ""); err != nil {
+		t.Fatalf("SaveCronEntry: %v", err)
+	}
+	got, err := LoadCronEntry(home, "nightly")
+	if err != nil {
+		t.Fatalf("LoadCronEntry: %v", err)
+	}
+	if got.Flow != "report" || got.Schedule != "0 6 * * *" {
+		t.Errorf("got = %+v", got)
+	}
+}
+
+func TestRemoveCronEntry(t *testing.T) {
+	home := t.TempDir()
+	e := cron.Entry{Name: "nightly", Flow: "report", Schedule: "0 6 * * *"}
+	if err := SaveCronEntry(home, e, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveCronEntry(home, "nightly", ""); err != nil {
+		t.Fatalf("RemoveCronEntry: %v", err)
+	}
+	if _, err := LoadCronEntry(home, "nightly"); !os.IsNotExist(err) {
+		t.Errorf("LoadCronEntry after remove: %v, want IsNotExist", err)
 	}
 }
 

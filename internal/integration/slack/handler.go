@@ -18,10 +18,11 @@ import (
 type Handler struct {
 	Home     string
 	KranqURL string
+	MetaURL  string
 }
 
-func NewHandler(home, kranqURL string) *Handler {
-	return &Handler{Home: home, KranqURL: kranqURL}
+func NewHandler(home, kranqURL, metaURL string) *Handler {
+	return &Handler{Home: home, KranqURL: kranqURL, MetaURL: metaURL}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +123,7 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		KranqURL: h.KranqURL,
 		Source:   spec.Repo,
 		AsUser:   user.ID,
+		MetaURL:  h.MetaURL,
 		ExtraEnv: extraEnv,
 	})
 	if err != nil {

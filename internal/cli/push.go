@@ -23,6 +23,7 @@ func runPush(env Env, args []string) int {
 	keep := fs.String("keep-vm", "", "keep the job VM: never, on-failure, always")
 	detach := fs.Bool("detach", false, "queue it and return without waiting for a result")
 	asUser := fs.String("as", os.Getenv("KMAN_ACTOR"), "kman user id this push is on behalf of (default: $KMAN_ACTOR); needed for integration: credentials")
+	metaURL := fs.String("meta-url", os.Getenv("KMAN_META_URL"), "the kman meta endpoint the VM can reach (default: $KMAN_META_URL); needed by a flow with access.meta")
 	positional, err := parsePermuted(fs, args)
 	if err != nil {
 		return exitcode.Usage
@@ -58,6 +59,7 @@ func runPush(env Env, args []string) int {
 		Keep:     *keep,
 		Detach:   *detach,
 		AsUser:   *asUser,
+		MetaURL:  *metaURL,
 	})
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)
@@ -78,7 +80,7 @@ func pushExitCode(err error) int {
 	var te *trigger.Error
 	if errors.As(err, &te) {
 		switch te.Stage {
-		case trigger.StageArgs, trigger.StageCredentials:
+		case trigger.StageArgs, trigger.StageCredentials, trigger.StageMeta:
 			return exitcode.InvalidSpec
 		case trigger.StageSource:
 			return exitcode.InternalError

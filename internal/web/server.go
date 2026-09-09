@@ -6,12 +6,16 @@ import (
 	"fmt"
 	"html/template"
 	"net/http"
+	"sort"
+	"strings"
 
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/config"
+	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/integration/slack"
+	"github.com/simon-em/kman/internal/trigger"
 	"gopkg.in/yaml.v3"
 )
 
@@ -30,7 +34,7 @@ fieldset{margin:1em 0}
 nav{margin-bottom:2em}
 </style></head>
 <body>
-<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a> | <a href="/integrations">integrations</a></nav>
+<nav><a href="/">kman</a> | <a href="/flows">flows</a> | <a href="/users">users</a> | <a href="/groups">groups</a> | <a href="/cron">cron</a> | <a href="/integrations">integrations</a></nav>
 {{.Body}}
 </body></html>`
 
@@ -62,6 +66,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /groups/new", s.newGroup)
 	mux.HandleFunc("GET /groups/{name}", s.viewGroup)
 	mux.HandleFunc("POST /groups/save", s.saveGroup)
+	mux.HandleFunc("GET /cron", s.listCron)
+	mux.HandleFunc("GET /cron/new", s.newCron)
+	mux.HandleFunc("GET /cron/{name}", s.viewCron)
+	mux.HandleFunc("POST /cron/save", s.saveCron)
 	mux.HandleFunc("GET /integrations", s.listIntegrations)
 	mux.HandleFunc("GET /integrations/bitbucket/connect", s.bitbucketConnect)
 	mux.HandleFunc("GET /integrations/bitbucket/callback", s.bitbucketCallback)
@@ -345,6 +353,113 @@ func (s *Server) saveGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/groups/"+g.Name, http.StatusSeeOther)
+}
+
+type cronEditData struct {
+	IsNew    bool
+	Entry    cron.Entry
+	AllFlows []string
+	ArgsText string
+	Actor    string
+	Error    string
+}
+
+func (s *Server) listCron(w http.ResponseWriter, r *http.Request) {
+	names, err := config.ListCronNames(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	entries := make([]cron.Entry, 0, len(names))
+	for _, n := range names {
+		e, err := config.LoadCronEntry(s.Home, n)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		entries = append(entries, e)
+	}
+	render(w, "Cron", "cron_list", struct{ Entries []cron.Entry }{entries})
+}
+
+func (s *Server) newCron(w http.ResponseWriter, r *http.Request) {
+	flows, err := config.ListFlowNames(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	render(w, "New cron entry", "cron_edit", cronEditData{IsNew: true, AllFlows: flows, Actor: actorFrom(r)})
+}
+
+func (s *Server) viewCron(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	e, err := config.LoadCronEntry(s.Home, name)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	flows, err := config.ListFlowNames(s.Home)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	render(w, "Cron: "+name, "cron_edit", cronEditData{Entry: e, AllFlows: flows, ArgsText: argsToText(e.Args), Actor: actorFrom(r)})
+}
+
+func (s *Server) saveCron(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	actorVal := r.FormValue("actor")
+	setActorCookie(w, actorVal)
+	argsText := r.FormValue("args")
+	args, err := textToArgs(argsText)
+	flows, _ := config.ListFlowNames(s.Home)
+	e := cron.Entry{
+		Name:      r.FormValue("name"),
+		Flow:      r.FormValue("flow"),
+		Schedule:  r.FormValue("schedule"),
+		Args:      args,
+		CreatedBy: actorVal,
+	}
+	if err == nil {
+		err = e.Validate()
+	}
+	if err != nil {
+		render(w, "Cron error", "cron_edit", cronEditData{Entry: e, AllFlows: flows, ArgsText: argsText, Actor: actorVal, Error: err.Error()})
+		return
+	}
+	if err := config.SaveCronEntry(s.Home, e, actorVal); err != nil {
+		render(w, "Cron error", "cron_edit", cronEditData{Entry: e, AllFlows: flows, ArgsText: argsText, Actor: actorVal, Error: err.Error()})
+		return
+	}
+	http.Redirect(w, r, "/cron/"+e.Name, http.StatusSeeOther)
+}
+
+func argsToText(args map[string]string) string {
+	keys := make([]string, 0, len(args))
+	for k := range args {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for _, k := range keys {
+		fmt.Fprintf(&b, "%s=%s\n", k, args[k])
+	}
+	return b.String()
+}
+
+func textToArgs(text string) (map[string]string, error) {
+	var assignments []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		assignments = append(assignments, line)
+	}
+	return trigger.ParseAssignments(assignments)
 }
 
 type integrationRow struct {
