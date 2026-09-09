@@ -299,7 +299,7 @@ i=0
 while [ "$i" -lt "$count" ]; do
   eval "val=\$GIT_PUSH_OPTION_$i"
   case "$val" in
-    task_file=*) cat "${val#task_file=}" > %s ;;
+    spec=*) printf '%%s' "${val#spec=}" | python3 -c 'import sys,base64,gzip; sys.stdout.buffer.write(gzip.decompress(base64.b64decode(sys.stdin.read())))' > %s ;;
   esac
   i=$((i+1))
 done

@@ -282,10 +282,13 @@ relay:
   mechanism** — a Slack user with no linked kman `User`, or a linked user
   with no grant for the named flow, gets a named reason back in the
   channel, never a silent no-op.
-- **The "blank VM" path needed no new code.** A flow pushed with no
-  `kranqfile:` already gets kranq's own base layer with nothing on top —
-  that was already true before this phase; Slack triggering it is just
-  another caller of `kman push`'s existing behavior.
+- **There is no "blank VM" path — corrected after this phase, against a
+  real kranq host.** The original assumption (a flow pushed with no
+  `kranqfile:` gets kranq's own base layer with nothing on top) is false
+  of the real binary: `internal/project.Load` requires a `Kranqfile` to
+  exist in the pushed checkout, containing at least one `RUN`/`COPY`.
+  Every flow's source repo needs a real one; see the CLAUDE.md fact and
+  the free-form-Slack-routing entry below for how this was found.
 - **Visibility is Slack's own channel model, not a second layer inside
   kman.** kman posts the result to whatever channel the request came from;
   it never decides who else can see that channel. The permission check is
@@ -756,22 +759,30 @@ kranq-side cleanup.
 
 Worth flagging about the free-form Slack routing work, before it's
 forgotten:
-- **`create-feature` has never actually run Claude Code inside a real
-  kranq VM.** Every test this session, automated and manual, exercises
-  kman's own mechanics up to the point of a successful `git push` to
-  kranq — routing, credential minting, source authentication — against
-  either a fake or (for the manual runs) a stub `post-receive` hook that
-  just echoes a canned `KRANQ-RESULT` line. Nothing in this environment
-  can run a real Lima VM, so whether Claude actually turns "add a TEST.md
-  file" into a sensible branch and PR, unattended, is unverified. Point
-  `kman slack serve --kranq-url` at a real kranq host to find out.
+- **`create-feature` has since run for real, end to end, against a real
+  kranq host with a real Lima VM.** Confirmed via both a manual `kman
+  push --source https://bitbucket.org/smntlbt/kman-demo.git` and a real
+  `@Kman ...` Slack mention: kranq's git-over-HTTP endpoint accepted the
+  push, built a real base image and one real layer, booted a real `vz`
+  Lima VM, ran real Claude Code inside it (`claude 2.1.236`), which read
+  `TASK` via `echo "$TASK"` as designed, made the change, hit the
+  expected "author identity unknown" (fixed by setting a throwaway git
+  identity — a plain git-in-a-fresh-VM fact, not a kman/kranq gap), used
+  the `bitbucket` skill, and opened a real PR: `smntlbt/kman-demo` pull
+  request #1. 12 turns, 23s, $0.22. This exercised, for the first time
+  against real infrastructure rather than a stub `post-receive` hook:
+  routing, credential minting, source authentication, `files:` staging,
+  the bitbucket skill, and kranq's actual result-reporting path. Two real
+  bugs surfaced and were fixed (see the CLAUDE.md facts on `-o spec=` and
+  the Kranqfile requirement); nothing else needed a change.
 - **The default-flow fallback has no rate limiting or loop protection.**
   Any message that isn't `run <flow>` becomes a real push (if the sender
   is granted `create-feature`) — a chatty channel could trigger a lot of
-  VM boots. Nothing about this phase changed kman's existing posture here
-  (an explicit `run <flow>` had the same property already), but the
-  fallback makes it easier to trigger by accident, worth a real look
-  before pointing this at a busy channel.
+  VM boots, and each one is a real, billed Claude Code run (~$0.22 in the
+  one real run measured so far, not a bound). Nothing about this phase
+  changed kman's existing posture here (an explicit `run <flow>` had the
+  same property already), but the fallback makes it easier to trigger by
+  accident, worth a real look before pointing this at a busy channel.
 
 Worth flagging about Phase 9, before it's forgotten:
 - **`access.flows` and `access.tools` are still declared-only.** See the
@@ -792,20 +803,16 @@ Worth flagging about Phase 9, before it's forgotten:
   a real need names one.
 
 Worth flagging about Phase 8, before it's forgotten:
-- **Guest→host reachability from a real kranq VM is still unconfirmed.**
-  docs/design.md flagged this explicitly as needing a probe before the
-  phase was finalized: whether a kranq-booted VM (per `assets/lima.yaml`)
-  can actually reach a host address like `host.lima.internal:8082` under
-  Lima's `vz` networking. Nothing in this session can run a real Lima VM
-  to check. Everything meta-related is proven up to the boundary of "a
-  process with the right token calls the endpoint" — the fake-kranq hook
-  in the manual smoke test stands in for that call exactly the way a real
-  VM's tool invocation would, but it isn't one. `--meta-url`/
-  `$KMAN_META_URL` is deliberately just a plain configured address (no
-  Lima-specific detection) precisely so the fallback docs/design.md named
-  — plain internet/LAN egress to a kman endpoint on its own address, the
-  same posture kranq's own git server already has — works without any
-  code change once this is confirmed either way.
+- **Guest→host reachability from a real kranq VM is confirmed working,
+  no code change needed.** A real task with `access.meta: [cron.create]`
+  reached `http://host.lima.internal:8082` from inside a real `vz` Lima
+  VM and completed a full round trip — `curl` to the meta endpoint,
+  bearer-token validation, a real `cron.Entry` committed to the config
+  repo — on the first try, with kranq's default networking and no
+  `hostResolver`/`hostNetworks` configuration in `assets/lima.yaml` at
+  all. `--meta-url`/`$KMAN_META_URL` staying a plain configured address
+  (no Lima-specific detection) was the right call: it needed nothing
+  extra once this was confirmed.
 - **The meta token store has no locking.** `Store.Mint`/`Validate` do a
   plain read-modify-write of `meta-tokens.json`, so two concurrent mints
   (or a mint racing a validate's prune) could lose a write. Same
@@ -835,13 +842,26 @@ Worth flagging about Phase 7, before it's forgotten:
   then the actual `KRANQ-RESULT`-derived line) exactly as designed, with
   no drift between Slack's real Events API payload shape and what kman's
   `ParseEnvelope`/`Event` expected.
-- **The AskUserQuestion relay has never run inside an actual kranq VM.**
-  `kman-ask.py`'s JSON-RPC handshake and its `tools/call` error path are
-  exercised directly (`python3 internal/integration/slack/assets/
-  kman-ask.py` fed synthetic stdin), but the whole point — Claude actually
-  invoking it mid-run inside a Lima VM, blocked on a real Slack thread
-  reply — has no test and can't get one without a real kranq host and a
-  real Slack app at the same time.
+- **The AskUserQuestion relay has since run inside a real kranq VM, end
+  to end, including a real human's answer.** A real `ask-demo` flow
+  (`access.meta: [ask]`) asked "hello or goodbye" in a real Slack thread,
+  blocked on `mcp__kman-ask__ask_user_question`, picked up the real
+  reply, and opened a real PR recording it (`smntlbt/kman-demo` PR #3).
+  Two real bugs surfaced on the way to that, both fixed:
+  - `InjectAskRelay` staged the relay script at an absolute root path
+    (`/kman/tools/kman-ask.py`); kranq's file-staging step does a plain
+    `mkdir -p` as the non-root build user with no sudo, which fails
+    outright on a path outside the checkout (`mkdir: cannot create
+    directory '/kman': Permission denied`). Fixed to a relative path,
+    `.kman/kman-ask.py`, staged the same way every other `files:` entry
+    already is (matching the `catalog:bitbucket` skill's own
+    `.claude/skills/...` convention).
+  - `kman-ask.py`'s `request()` sent every Slack Web API call as a JSON
+    body. `chat.postMessage` accepts that, but `conversations.replies`
+    does not — it returned `invalid_arguments` on a well-formed request,
+    twice, deterministically. Fixed by switching to classic
+    `application/x-www-form-urlencoded` bodies for every call, the one
+    encoding every Slack Web API method actually accepts.
 - **A Slack-triggered push requires `spec.Repo` to be a real remote URL.**
   Unlike `kman push`'s CLI default of `.` ("wherever you're standing"),
   there's no local checkout to fall back to inside a long-running `kman
@@ -859,7 +879,15 @@ Two things worth flagging since Phase 1, before they're forgotten:
   fetch `result.ResultRef` into the local mirror and let the caller inspect
   it with plain git — but nothing forced the decision yet, so it's not
   built ahead of a real need.
-- **Never tested against a real kranq instance.** The stub-hook tests prove
-  kman's own wire format is self-consistent; they can't catch a real drift
-  against kranq's actual `internal/gitsrv`/`internal/task` code. Worth doing
-  before relying on this for anything real.
+- **Since tested against a real kranq instance**, not just the stub-hook
+  tests. Found a real drift the stub couldn't catch: kman was sending
+  `-o task_file=<host path>` (a path *inside the pushed commit*, per
+  kranq's real contract) instead of inlining the rendered spec; kranq's
+  real `pre-receive` hook rejected it outright. Fixed by sending `-o
+  spec=<gzip+base64>` instead (see the CLAUDE.md fact). Also found that
+  kranq's git-over-HTTP endpoint is off by default (`KRANQ_HTTP_ADDR`)
+  and needs a `kranq token create` credential — undocumented anywhere
+  before this, now in CLAUDE.md's "proven end to end" fact. The
+  mirror-ref push-ahead (`UpdateMirror`) is confirmed still broken
+  against the real `pre-receive` hook (see the CLAUDE.md fact) — caught,
+  logged, never fatal, but never actually working either.

@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 PROTOCOL_VERSION = "2025-06-18"
@@ -31,10 +32,11 @@ def channel() -> str:
 
 
 def request(method: str, path: str, body: dict) -> dict:
-    data = json.dumps(body).encode()
+    params = {k: v for k, v in body.items() if v is not None}
+    data = urllib.parse.urlencode(params).encode()
     headers = {
         "Authorization": f"Bearer {bot_token()}",
-        "Content-Type": "application/json; charset=utf-8",
+        "Content-Type": "application/x-www-form-urlencoded",
     }
     req = urllib.request.Request(f"{API}/{path}", data=data, headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=30) as resp:

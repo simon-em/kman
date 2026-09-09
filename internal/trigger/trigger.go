@@ -82,11 +82,6 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageRender, err}
 	}
-	taskFile, err := writeTempTask(rendered)
-	if err != nil {
-		return kranqpush.Result{}, &Error{StageRender, err}
-	}
-	defer os.Remove(taskFile)
 
 	sourceDir, err := resolveSource(ctx, home, opts.Source)
 	if err != nil {
@@ -99,7 +94,7 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 
 	result, err := kranqpush.Push(ctx, sourceDir, "HEAD", kranqpush.Options{
 		KranqURL: opts.KranqURL,
-		TaskFile: taskFile,
+		Spec:     []byte(rendered),
 		Repo:     spec.Repo,
 		Branch:   firstNonEmpty(opts.Branch, spec.Branch),
 		Label:    opts.Label,
@@ -216,18 +211,6 @@ func ParseAssignments(args []string) (map[string]string, error) {
 		out[name] = value
 	}
 	return out, nil
-}
-
-func writeTempTask(content string) (string, error) {
-	f, err := os.CreateTemp("", "kman-task-*.yaml")
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-	if _, err := f.WriteString(content); err != nil {
-		return "", err
-	}
-	return f.Name(), nil
 }
 
 func resolveSource(ctx context.Context, home, source string) (string, error) {

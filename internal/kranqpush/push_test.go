@@ -53,7 +53,7 @@ func TestPushParsesResultFromAGitHook(t *testing.T) {
 
 	result, err := Push(context.Background(), source, "HEAD", Options{
 		KranqURL: kranq,
-		TaskFile: "task.yaml",
+		Spec:     []byte("name: a-task\n"),
 		Env:      map[string]string{"FOO": "bar"},
 	})
 	if err != nil {
@@ -79,7 +79,7 @@ echo "KRANQ-RESULT id=abc123 status=ok exit=0"
 
 	result, err := Push(context.Background(), source, "HEAD", Options{
 		KranqURL: kranq,
-		TaskFile: "task.yaml",
+		Spec:     []byte("name: a-task\n"),
 		Repo:     "dx",
 		Branch:   "main",
 		Env:      map[string]string{"FOO": "bar"},
@@ -107,7 +107,7 @@ func TestUpdateMirrorPushesTheRef(t *testing.T) {
 
 func TestPushWithNoKranqURL(t *testing.T) {
 	source := newSourceRepoWithCommit(t)
-	_, err := Push(context.Background(), source, "HEAD", Options{TaskFile: "task.yaml"})
+	_, err := Push(context.Background(), source, "HEAD", Options{Spec: []byte("name: a-task\n")})
 	if err == nil {
 		t.Fatal("expected an error when no kranq URL is given")
 	}

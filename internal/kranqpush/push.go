@@ -1,8 +1,11 @@
 package kranqpush
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"sort"
@@ -15,7 +18,7 @@ const MirrorRefPrefix = "refs/heads/mirror/"
 
 type Options struct {
 	KranqURL string
-	TaskFile string
+	Spec     []byte
 	Repo     string
 	Branch   string
 	Label    string
@@ -28,12 +31,16 @@ func Push(ctx context.Context, sourceDir, rev string, opts Options) (Result, err
 	if opts.KranqURL == "" {
 		return Result{}, fmt.Errorf("no kranq URL given")
 	}
-	if opts.TaskFile == "" {
-		return Result{}, fmt.Errorf("no task file given")
+	if len(opts.Spec) == 0 {
+		return Result{}, fmt.Errorf("no task spec given")
+	}
+	optionArgs, err := pushOptionArgs(opts)
+	if err != nil {
+		return Result{}, err
 	}
 	ref := taskRef()
 	args := []string{"--git-dir=" + sourceDir, "push", "--force", opts.KranqURL, rev + ":" + ref}
-	args = append(args, pushOptionArgs(opts)...)
+	args = append(args, optionArgs...)
 
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, runErr := cmd.CombinedOutput()
@@ -61,11 +68,31 @@ func UpdateMirror(ctx context.Context, sourceDir, rev, kranqURL, slug string) er
 	return nil
 }
 
-func pushOptionArgs(opts Options) []string {
+// encodeSpec matches kranq's own gitsrv.EncodeSpec wire format (gzip, then
+// base64) for the -o spec= push option. kman cannot import kranq's internal
+// package, so this is a second implementation of the same small encoding,
+// not a shared one.
+func encodeSpec(spec []byte) (string, error) {
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	if _, err := gz.Write(spec); err != nil {
+		return "", err
+	}
+	if err := gz.Close(); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(buf.Bytes()), nil
+}
+
+func pushOptionArgs(opts Options) ([]string, error) {
 	var args []string
 	add := func(v string) { args = append(args, "-o", v) }
 
-	add("task_file=" + opts.TaskFile)
+	encoded, err := encodeSpec(opts.Spec)
+	if err != nil {
+		return nil, fmt.Errorf("encoding the task spec: %w", err)
+	}
+	add("spec=" + encoded)
 	for _, kv := range [][2]string{{"repo", opts.Repo}, {"branch", opts.Branch}, {"label", opts.Label}, {"keep-vm", opts.Keep}} {
 		if kv[1] != "" {
 			add(kv[0] + "=" + kv[1])
@@ -84,7 +111,7 @@ func pushOptionArgs(opts Options) []string {
 	if opts.Detach {
 		add("detach")
 	}
-	return args
+	return args, nil
 }
 
 func taskRef() string {

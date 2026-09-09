@@ -9,7 +9,7 @@ import (
 
 const AskMeta = "ask"
 
-const askRelayPath = "/kman/tools/kman-ask.py"
+const askRelayPath = ".kman/kman-ask.py"
 
 //go:embed assets/kman-ask.py
 var askRelayScript []byte

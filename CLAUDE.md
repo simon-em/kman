@@ -33,15 +33,21 @@ stub hook, never by the compiler — if kranq's push protocol changes, this
 package needs a matching update, and there's no automated signal that it
 does.
 
-**`kman push`'s mirror ref survives kranq's ref sweep on purpose.** Before
-every task push, `kranqpush.UpdateMirror` best-effort-pushes
-`refs/heads/mirror/<slug>` (never forced, so a non-fast-forward there is a
-loud warning, not a silent rewrite). kranq only sweeps `refs/heads/task/*`
-and `refs/heads/ok/*` (it parses a timestamp out of the ref name to decide
-what's stale) — a `mirror/` ref doesn't match that pattern, so it persists
-indefinitely as a durable object anchor. That's what keeps repeat pushes to
-the same external repo small instead of resending its whole history each
-time, without needing anything from kranq itself.
+**`kman push`'s mirror-ref push-ahead (`kranqpush.UpdateMirror`) is
+confirmed non-functional against a real kranq host, and has been since it
+was written.** The idea was to best-effort-push `refs/heads/mirror/<slug>`
+ahead of every task push so a `mirror/` ref (outside kranq's
+`task/*`/`ok/*` sweep pattern) persists as a durable object anchor,
+shrinking every later push to a delta. In practice, kranq's real
+`pre-receive` hook rejects *any* push that carries no `task`/`task_file`/
+`spec` option — including a plain ref update with no task at all — so
+`UpdateMirror` fails every single time with "no task: push with -o
+task_file=... or -o task=...". This was always caught (best-effort,
+logged as `kman: warning:`, never fatal) and never blocked a real run, but
+the optimization itself has never once succeeded outside a synthetic test
+hook that doesn't enforce kranq's real pre-receive rule. Worth either a
+kranq-side exception for a plain ref update with no task, or dropping the
+mechanism from kman.
 
 **`kman push --source` defaults to `.`, on purpose, matching kranq's own
 `kranq push`.** kranq's own client just pushes whatever `HEAD` is in the
@@ -67,11 +73,17 @@ tools (MCP servers) — see docs/design.md Phase 5. Nothing else about kranq
 needs to change, and there's no requirement to preserve backward
 compatibility for its own sake.
 
-**kman never talks to `limactl` and never manages a VM directly.** A "blank
-VM" is a flow pushed to kranq with no Kranqfile — kranq's own base image and
-layer cache are what actually provide it. Starting a VM is entirely kranq's
-job, reached only through `git push kranq -o task_file=... -o
-env.NAME=VALUE`.
+**kman never talks to `limactl` and never manages a VM directly.** Starting
+a VM is entirely kranq's job, reached only through `git push kranq -o
+spec=<gzip+base64> -o env.NAME=VALUE`. There is no "blank VM" — confirmed
+against a real kranq host (v0.2.0-21-gbff29da): `internal/project.Load`
+requires a `Kranqfile` to exist in the pushed checkout at all, and
+`internal/project` (`parse`) then requires it to contain at least one `RUN`
+or `COPY` ("builds nothing" otherwise) — docs/design.md's Phase 1 assumption
+that a flow with no Kranqfile gets kranq's bare base layer was never true of
+the real binary. Every flow's source repo needs a real Kranqfile with at
+least one instruction; `create-feature`'s demo repo
+(`smntlbt/kman-demo`) carries a minimal `RUN true`.
 
 **kman shells out to `git` for everything — the host-side cache, the config
 repo, and the push to kranq. Never a Go git library.** Same reasoning kranq
@@ -267,11 +279,23 @@ caller-agnostic.
 not through `mcp_servers.kman-ask.env`.** docs/design.md's own Phase 7 text
 lists only `KMAN_RUN_ID`/`KMAN_FLOW_ID`/`KMAN_SLACK_CHANNEL` in that env
 block, deliberately omitting the token — putting it there would bake it
-into the rendered task YAML kman writes to a temp file and pushes as
-`-o task_file=`. `ExtraEnv` instead flows through the same push-option env
-path a resolved `credentials:` value does, so it only ever exists as a
-shell-exported variable, inherited by the MCP server subprocess like any
-other child process of the step.
+into the rendered task YAML itself (which travels as one `-o spec=`
+push option and ends up in kranq's own task record). `ExtraEnv` instead
+flows through the same push-option env path a resolved `credentials:`
+value does, so it only ever exists as a shell-exported variable, inherited
+by the MCP server subprocess like any other child process of the step.
+
+**`internal/kranqpush` sends the rendered task inline via `-o
+spec=<gzip+base64>`, matching kranq's real `gitsrv.EncodeSpec` wire format
+— confirmed against a real kranq host, not assumed.** An earlier version
+used `-o task_file=<host path>`, which is for a task file *already inside
+the pushed commit*; kranq's real `pre-receive` hook rejected it outright
+("... is not in the pushed commit") the first time this was tried against
+a real daemon instead of a synthetic test hook. kman cannot import
+kranq's `gitsrv` package (see the process-boundary fact above), so
+`kranqpush.encodeSpec` is a second, independent implementation of the
+same small gzip+base64 encoding — a drift in kranq's real format still
+needs a matching update here, same as the rest of `internal/kranqpush`.
 
 **`kman slack serve` is a separate command and a separate listener from
 `kman web`, not a route mounted on it.** `kman web` binds `127.0.0.1` by
@@ -540,3 +564,42 @@ new, separate one.
 **No code comments in this repo, per the maintainer's standing instruction.**
 If a construct needs a comment to be understood, it's the wrong construct —
 rewrite it instead.
+
+**`InjectAskRelay`'s staged file path must be relative, not absolute.**
+kranq's `files:` staging does a plain `mkdir -p <dirname>` as the non-root
+build user, no sudo — an absolute path like the original
+`/kman/tools/kman-ask.py` fails outright ("Permission denied") since that
+user can't create a directory at `/`. Confirmed against a real kranq VM.
+`askRelayPath` is `.kman/kman-ask.py`, relative to the checkout, same as
+every other staged file (the `catalog:bitbucket` skill's own
+`.claude/skills/...` path).
+
+**`kman-ask.py` form-encodes every Slack Web API call, not JSON — Slack's
+own API is inconsistent about which it accepts.** `chat.postMessage`
+accepts a JSON body; `conversations.replies` rejected the same shape of
+well-formed request with `invalid_arguments`, confirmed twice against the
+real API in a real run, before landing on `application/x-www-form-urlencoded`
+as the encoding that actually works for both. Sending form data
+everywhere sidesteps needing to track which method wants which.
+
+**Guest→host reachability for `access.meta` is confirmed working under
+kranq's default Lima networking, no extra config.** A real VM reached
+`http://host.lima.internal:8082` (where `kman meta serve` was listening)
+on the first try — `assets/lima.yaml` declares no `hostResolver`/
+`hostNetworks` at all, and none was needed. `--meta-url` staying a plain
+configured address rather than doing Lima-specific detection was the
+right call.
+
+**Proven end to end against a real kranq host, real Lima VM, real Claude
+Code, real Bitbucket PR** — `smntlbt/kman-demo` pull request #1. kranq's
+git-over-HTTP endpoint is off by default (`KRANQ_HTTP_ADDR` unset); to
+point kman at a real local kranq for testing: `kranq config set
+KRANQ_HTTP_ADDR=127.0.0.1:8420`, restart the daemon, `kranq token create
+<name>` for a push credential (shown once, never stored/re-shown), then a
+`KranqURL` of `http://<name>:<token>@127.0.0.1:8420/git/<repo-name>`
+(`KRANQ_AUTO_CREATE_REPOS` defaults to true, so `<repo-name>` need not
+exist yet — it's unrelated to `spec.Repo`, which is the *source* clone
+URL). This surfaced the two real bugs described above (`-o spec=` and
+the Kranqfile requirement); nothing about routing, credential minting,
+or Slack event handling needed a further change once those two were
+fixed.
