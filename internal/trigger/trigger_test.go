@@ -14,9 +14,11 @@ import (
 	"testing"
 
 	"github.com/simon-em/kman/internal/catalog"
+	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
 	"github.com/simon-em/kman/internal/meta"
+	"github.com/simon-em/kman/internal/reporegistry"
 	"github.com/simon-em/kman/internal/vault"
 )
 
@@ -275,6 +277,74 @@ func TestRunMintsAndInjectsAMetaTokenWhenConfigured(t *testing.T) {
 	}
 }
 
+func newBareKranqRepoCapturingRepoOption(t *testing.T) (dir, repoFile string) {
+	t.Helper()
+	dir = t.TempDir()
+	repoFile = filepath.Join(dir, "repo.txt")
+	hook := fmt.Sprintf(`
+count="${GIT_PUSH_OPTION_COUNT:-0}"
+i=0
+while [ "$i" -lt "$count" ]; do
+  eval "val=\$GIT_PUSH_OPTION_$i"
+  case "$val" in
+    repo=*) printf '%%s' "${val#repo=}" > %s ;;
+  esac
+  i=$((i+1))
+done
+echo "KRANQ-RESULT id=x status=ok exit=0"
+`, repoFile)
+	mustRunGit(t, dir, "init", "-q", "--bare")
+	mustRunGit(t, dir, "config", "receive.denyCurrentBranch", "ignore")
+	mustRunGit(t, dir, "config", "receive.advertisePushOptions", "true")
+	if err := os.WriteFile(filepath.Join(dir, "hooks", "post-receive"), []byte("#!/bin/sh\n"+hook), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir, repoFile
+}
+
+func TestRunSendsTheResolvedSourceAsTheRepoOptionNotTheFlowsStaticRepo(t *testing.T) {
+	home := t.TempDir()
+	kranq, repoFile := newBareKranqRepoCapturingRepoOption(t)
+	source := newSourceRepo(t)
+	sourceURL := "file://" + source
+	spec := flow.Spec{
+		Name:  "multi-repo-flow",
+		Repo:  "https://bitbucket.org/smntlbt/kman-demo.git",
+		Steps: []flow.Step{{Name: "a", Run: "echo hi"}},
+	}
+	_, err := Run(context.Background(), home, spec, nil, Options{
+		KranqURL: kranq, Source: sourceURL,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got, _ := os.ReadFile(repoFile); string(got) != sourceURL {
+		t.Errorf("repo option = %q, want the actually-pushed source %q, not the flow's static repo:", got, sourceURL)
+	}
+}
+
+func TestRunFallsBackToTheFlowsStaticRepoWhenSourceIsALocalPath(t *testing.T) {
+	home := t.TempDir()
+	kranq, repoFile := newBareKranqRepoCapturingRepoOption(t)
+	source := newSourceRepo(t)
+	spec := flow.Spec{
+		Name:  "single-repo-flow",
+		Repo:  "https://bitbucket.org/smntlbt/kman-demo.git",
+		Steps: []flow.Step{{Name: "a", Run: "echo hi"}},
+	}
+	_, err := Run(context.Background(), home, spec, nil, Options{
+		KranqURL: kranq, Source: source,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if got, _ := os.ReadFile(repoFile); string(got) != spec.Repo {
+		t.Errorf("repo option = %q, want the flow's static repo %q", got, spec.Repo)
+	}
+}
+
 func TestRunFailsAtTheSkillsStageForAnUnknownCatalogEntry(t *testing.T) {
 	home := t.TempDir()
 	spec := flow.Spec{
@@ -373,6 +443,60 @@ func TestSourceAuthHeaderMintsARepositoryScopedTokenForBitbucket(t *testing.T) {
 	}
 	if gotScope != "repository" {
 		t.Errorf("scope requested = %q, want repository (bitbucket's read scope)", gotScope)
+	}
+}
+
+func TestResolveRepoRefPassesThroughAnAlreadyRemoteRef(t *testing.T) {
+	got, err := ResolveRepoRef(t.TempDir(), "https://bitbucket.org/smntlbt/dx.git")
+	if err != nil {
+		t.Fatalf("ResolveRepoRef: %v", err)
+	}
+	if got != "https://bitbucket.org/smntlbt/dx.git" {
+		t.Errorf("got = %q", got)
+	}
+}
+
+func TestResolveRepoRefLooksUpAnAliasInTheRegistry(t *testing.T) {
+	home := t.TempDir()
+	if err := config.SaveRepo(home, reporegistry.Repo{Name: "dx", URL: "https://bitbucket.org/smntlbt/dx.git"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ResolveRepoRef(home, "dx")
+	if err != nil {
+		t.Fatalf("ResolveRepoRef: %v", err)
+	}
+	if got != "https://bitbucket.org/smntlbt/dx.git" {
+		t.Errorf("got = %q", got)
+	}
+}
+
+func TestResolveRepoRefRejectsAnUnknownAlias(t *testing.T) {
+	if _, err := ResolveRepoRef(t.TempDir(), "no-such-repo"); err == nil {
+		t.Fatal("expected an error for an unregistered alias")
+	}
+}
+
+func TestBitbucketEnvDerivesWorkspaceAndSlugFromTheURL(t *testing.T) {
+	got := bitbucketEnv("https://bitbucket.org/smntlbt/kman-demo.git")
+	if got["BITBUCKET_WORKSPACE"] != "smntlbt" || got["BITBUCKET_REPO_SLUG"] != "kman-demo" {
+		t.Errorf("got = %+v", got)
+	}
+}
+
+func TestBitbucketEnvIsNilForANonBitbucketHost(t *testing.T) {
+	if got := bitbucketEnv("https://github.com/example/repo.git"); got != nil {
+		t.Errorf("got = %+v, want nil", got)
+	}
+}
+
+func TestAutoRepoEnvLeavesAFlowsOwnExplicitEnvAlone(t *testing.T) {
+	spec := flow.Spec{Env: map[string]string{"BITBUCKET_WORKSPACE": "hardcoded"}}
+	got := autoRepoEnv(spec, "https://bitbucket.org/smntlbt/kman-demo.git")
+	if _, ok := got["BITBUCKET_WORKSPACE"]; ok {
+		t.Errorf("got = %+v, want BITBUCKET_WORKSPACE left to the flow's own env:", got)
+	}
+	if got["BITBUCKET_REPO_SLUG"] != "kman-demo" {
+		t.Errorf("got = %+v, want BITBUCKET_REPO_SLUG auto-derived", got)
 	}
 }
 

@@ -60,6 +60,7 @@ func (f File) Base64Content() string {
 
 type Spec struct {
 	Name        string            `yaml:"name"`
+	Description string            `yaml:"description"`
 	Repo        string            `yaml:"repo"`
 	Branch      string            `yaml:"branch"`
 	Label       string            `yaml:"label"`

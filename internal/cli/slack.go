@@ -28,7 +28,9 @@ func runSlackServe(env Env, args []string) int {
 	if defaultFlowEnv == "" {
 		defaultFlowEnv = "create-feature"
 	}
-	defaultFlow := fs.String("default-flow", defaultFlowEnv, "flow to run for a mention that isn't \"run <flow>\", the mention text becomes its TASK argument (empty disables this)")
+	defaultFlow := fs.String("default-flow", defaultFlowEnv, "flow to run for a mention that isn't \"run <flow>\", the mention text becomes its TASK argument (empty disables this; ignored if --dispatch is set)")
+	dispatchFlag := fs.Bool("dispatch", os.Getenv("KMAN_DISPATCH") == "true", "route a free-form mention to a flow and repo picked from it, via a claude -p classification call, instead of a fixed --default-flow (default: $KMAN_DISPATCH)")
+	dispatchModel := fs.String("dispatch-model", os.Getenv("KMAN_DISPATCH_MODEL"), "model for the dispatch classification call (default: $KMAN_DISPATCH_MODEL, or dispatch's own default)")
 	if err := fs.Parse(args); err != nil {
 		return exitcode.Usage
 	}
@@ -41,8 +43,12 @@ func runSlackServe(env Env, args []string) int {
 		return exitcode.Misconfigured
 	}
 
+	handler := slack.NewHandler(kmanHome(), *kranqURL, *metaURL, *defaultFlow)
+	handler.Dispatch = *dispatchFlag
+	handler.DispatchModel = *dispatchModel
+
 	mux := http.NewServeMux()
-	mux.Handle("POST /slack/events", slack.NewHandler(kmanHome(), *kranqURL, *metaURL, *defaultFlow))
+	mux.Handle("POST /slack/events", handler)
 	fmt.Fprintf(env.Stdout, "kman slack serve listening on http://%s/slack/events\n", *addr)
 	if err := http.ListenAndServe(*addr, mux); err != nil {
 		fmt.Fprintf(env.Stderr, "kman: %v\n", err)

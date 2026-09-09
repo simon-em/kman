@@ -10,16 +10,20 @@ import (
 	"os"
 	"time"
 
+	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/config"
+	"github.com/simon-em/kman/internal/dispatch"
 	"github.com/simon-em/kman/internal/kranqpush"
 	"github.com/simon-em/kman/internal/trigger"
 )
 
 type Handler struct {
-	Home        string
-	KranqURL    string
-	MetaURL     string
-	DefaultFlow string
+	Home          string
+	KranqURL      string
+	MetaURL       string
+	DefaultFlow   string
+	Dispatch      bool
+	DispatchModel string
 }
 
 func NewHandler(home, kranqURL, metaURL, defaultFlow string) *Handler {
@@ -76,12 +80,6 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		}
 	}
 
-	flowName, args, err := ParseCommand(event.Text, h.DefaultFlow)
-	if err != nil {
-		reply("%s", err.Error())
-		return
-	}
-
 	cfg, err := config.Load(h.Home, "")
 	if err != nil {
 		reply("kman config error: %v", err)
@@ -92,6 +90,16 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		reply("no kman user is linked to your Slack account; ask an admin to set slack_user_id")
 		return
 	}
+
+	flowName, provided, err := h.route(ctx, cfg, user, event, reply)
+	if err != nil {
+		reply("%s", err.Error())
+		return
+	}
+	if flowName == "" {
+		return
+	}
+
 	if !cfg.Access.CanTrigger(user.ID, flowName) {
 		reply("%s is not authorized to trigger %q", user.ID, flowName)
 		return
@@ -102,14 +110,18 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		reply("no such flow %q", flowName)
 		return
 	}
-	if !trigger.LooksLikeRemote(spec.Repo) {
-		reply("flow %q has no repo: set repo: to a remote URL for Slack-triggered runs", flowName)
-		return
-	}
 
-	provided, err := trigger.ParseAssignments(args)
-	if err != nil {
-		reply("%v", err)
+	source := spec.Repo
+	if repoRef := provided["REPO"]; repoRef != "" {
+		resolved, err := trigger.ResolveRepoRef(h.Home, repoRef)
+		if err != nil {
+			reply("%v", err)
+			return
+		}
+		source = resolved
+	}
+	if !trigger.LooksLikeRemote(source) {
+		reply("flow %q has no repo: set repo: on the flow, or name one from `kman repo ls` with REPO=", flowName)
 		return
 	}
 
@@ -122,7 +134,7 @@ func (h *Handler) handle(provider *Provider, event Event) {
 	reply("running %s...", flowName)
 	result, err := trigger.Run(ctx, h.Home, spec, provided, trigger.Options{
 		KranqURL: h.KranqURL,
-		Source:   spec.Repo,
+		Source:   source,
 		AsUser:   user.ID,
 		MetaURL:  h.MetaURL,
 		ExtraEnv: extraEnv,
@@ -136,6 +148,84 @@ func (h *Handler) handle(provider *Provider, event Event) {
 		return
 	}
 	reply("%s: id=%s status=%s exit=%d", flowName, result.ID, result.Status, result.ExitCode)
+}
+
+func (h *Handler) route(ctx context.Context, cfg config.Config, user access.User, event Event, reply func(string, ...any)) (flowName string, provided map[string]string, err error) {
+	stripped := strippedText(event.Text)
+	if stripped == "" {
+		return "", nil, fmt.Errorf(`say "run <flow> [NAME=VALUE...]" or describe what you want done`)
+	}
+
+	if name, args, isRun, rerr := parseExplicitRun(stripped); isRun {
+		if rerr != nil {
+			return "", nil, rerr
+		}
+		provided, err := trigger.ParseAssignments(args)
+		if err != nil {
+			return "", nil, err
+		}
+		return name, provided, nil
+	}
+
+	if !h.Dispatch {
+		if h.DefaultFlow == "" {
+			return "", nil, fmt.Errorf(`say "run <flow> [NAME=VALUE...]"; no default flow is configured for free-form requests`)
+		}
+		return h.DefaultFlow, map[string]string{"TASK": stripped}, nil
+	}
+
+	candidates, err := h.candidateFlows(cfg, user.ID)
+	if err != nil {
+		return "", nil, err
+	}
+	if len(candidates) == 0 {
+		return "", nil, fmt.Errorf("no flows are granted to you; ask an admin to `kman grant user/%s <flow>`", user.ID)
+	}
+	repoRows, err := config.ListRepos(h.Home)
+	if err != nil {
+		return "", nil, err
+	}
+	repoCandidates := make([]dispatch.RepoCandidate, len(repoRows))
+	for i, r := range repoRows {
+		repoCandidates[i] = dispatch.RepoCandidate{Name: r.Name}
+	}
+
+	result, err := dispatch.Route(ctx, stripped, h.DispatchModel, candidates, repoCandidates)
+	if err != nil {
+		return "", nil, err
+	}
+	if result.Flow == "" {
+		if result.Clarify != "" {
+			reply("%s", result.Clarify)
+		} else {
+			reply(`not sure what you meant; try "run <flow> [NAME=VALUE...]"`)
+		}
+		return "", nil, nil
+	}
+	provided = map[string]string{"TASK": result.Task}
+	if result.Repo != "" {
+		provided["REPO"] = result.Repo
+	}
+	return result.Flow, provided, nil
+}
+
+func (h *Handler) candidateFlows(cfg config.Config, userID string) ([]dispatch.FlowCandidate, error) {
+	names, err := config.ListFlowNames(h.Home)
+	if err != nil {
+		return nil, err
+	}
+	var candidates []dispatch.FlowCandidate
+	for _, name := range names {
+		if !cfg.Access.CanTrigger(userID, name) {
+			continue
+		}
+		spec, err := config.LoadFlow(h.Home, name)
+		if err != nil {
+			continue
+		}
+		candidates = append(candidates, dispatch.FlowCandidate{Name: name, Description: spec.Description})
+	}
+	return candidates, nil
 }
 
 func newRunID() string {

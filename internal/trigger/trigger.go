@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/simon-em/kman/internal/catalog"
+	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/flow"
 	"github.com/simon-em/kman/internal/gitcache"
 	"github.com/simon-em/kman/internal/integration/bitbucket"
@@ -73,7 +74,7 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageMeta, err}
 	}
-	pushEnv, err := MergeEnv(resolvedArgs, resolvedCreds, opts.ExtraEnv, metaEnv)
+	pushEnv, err := MergeEnv(resolvedArgs, resolvedCreds, opts.ExtraEnv, metaEnv, autoRepoEnv(spec, opts.Source))
 	if err != nil {
 		return kranqpush.Result{}, &Error{StageArgs, err}
 	}
@@ -95,7 +96,7 @@ func Run(ctx context.Context, home string, spec flow.Spec, provided map[string]s
 	result, err := kranqpush.Push(ctx, sourceDir, "HEAD", kranqpush.Options{
 		KranqURL: opts.KranqURL,
 		Spec:     []byte(rendered),
-		Repo:     spec.Repo,
+		Repo:     firstNonEmpty(remoteOrEmpty(opts.Source), spec.Repo),
 		Branch:   firstNonEmpty(opts.Branch, spec.Branch),
 		Label:    opts.Label,
 		Keep:     opts.Keep,
@@ -238,6 +239,49 @@ func sourceAuthHeader(home, source string) string {
 
 func LooksLikeRemote(s string) bool {
 	return strings.Contains(s, "://") || strings.Contains(s, "@")
+}
+
+func remoteOrEmpty(source string) string {
+	if LooksLikeRemote(source) {
+		return source
+	}
+	return ""
+}
+
+func ResolveRepoRef(home, ref string) (string, error) {
+	if LooksLikeRemote(ref) {
+		return ref, nil
+	}
+	r, err := config.LoadRepo(home, ref)
+	if err != nil {
+		return "", fmt.Errorf("no repo named %q; see `kman repo ls`", ref)
+	}
+	return r.URL, nil
+}
+
+func autoRepoEnv(spec flow.Spec, source string) map[string]string {
+	env := map[string]string{}
+	for name, value := range bitbucketEnv(source) {
+		if _, exists := spec.Env[name]; !exists {
+			env[name] = value
+		}
+	}
+	return env
+}
+
+func bitbucketEnv(source string) map[string]string {
+	u, err := url.Parse(source)
+	if err != nil || u.Host != "bitbucket.org" {
+		return nil
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 2 {
+		return nil
+	}
+	return map[string]string{
+		"BITBUCKET_WORKSPACE": parts[0],
+		"BITBUCKET_REPO_SLUG": strings.TrimSuffix(parts[1], ".git"),
+	}
 }
 
 func gitDirOf(path string) (string, error) {

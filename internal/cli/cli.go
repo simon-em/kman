@@ -34,6 +34,7 @@ func init() {
 		"secret":      {"secret set|ls|rm ...", "manage kman's encrypted credential store", runSecret},
 		"user":        {"user set|ls ...", "manage kman users", runUser},
 		"group":       {"group set|ls|add-member|remove-member ...", "manage kman groups", runGroup},
+		"repo":        {"repo set|ls|rm ...", "manage named source repos a flow or dispatch can target", runRepo},
 		"grant":       {"grant <user/ID|group/NAME> <flow>", "let a user or group trigger a flow", runGrant},
 		"revoke":      {"revoke <user/ID|group/NAME> <flow>", "undo a grant", runRevoke},
 		"web":         {"web [--addr HOST:PORT]", "serve the admin UI over the config repo", runWeb},

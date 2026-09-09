@@ -603,3 +603,70 @@ URL). This surfaced the two real bugs described above (`-o spec=` and
 the Kranqfile requirement); nothing about routing, credential minting,
 or Slack event handling needed a further change once those two were
 fixed.
+
+**A flow's `repo:` is a default, not a fixed target — `internal/reporegistry`
+plus `trigger.ResolveRepoRef` let it be overridden per push.** A `REPO=`
+argument (explicit `run <flow> REPO=name`, or dispatch-resolved) is
+resolved via `ResolveRepoRef`: a value that already looks like a remote
+URL (`trigger.LooksLikeRemote`) passes through untouched, otherwise it's
+looked up by name against `config.LoadRepo` (`kman repo set|ls|rm`). This
+is deliberately scoped to the Slack path, not `kman push`'s own
+`--source`: that flag already accepts any URL directly and defaults to
+`.` ("wherever you're standing"), and applying alias resolution there
+would make a literal local path like `.` an ambiguous lookup against the
+registry. No such ambiguity exists for Slack, which has no local
+checkout to fall back to at all.
+
+**The `-o repo=` push option must reflect the actually-resolved source,
+not `spec.Repo`, once a flow can target more than one repo.** Before this,
+`Repo: spec.Repo` was always correct because a flow only ever had one
+repo. `trigger.Run` now sends `firstNonEmpty(source-if-remote, spec.Repo)`
+instead — otherwise every push from a multi-repo flow would misreport
+its own identity as the flow's static default, which per kranq's own
+docs is what a fence and a task's own repo association are keyed on.
+
+**`BITBUCKET_WORKSPACE`/`BITBUCKET_REPO_SLUG` are auto-derived from
+the resolved source when it's a `bitbucket.org` URL, unless the flow's
+own `env:` already sets them.** `create-feature.yaml` used to hardcode
+both to `kman-demo`; once the flow could target other repos, that
+hardcoding became a real correctness bug (a PR opened against the wrong
+repo's API), not just redundant. The conditional skip
+(`trigger.autoRepoEnv`) exists so an older single-repo flow that still
+sets these explicitly is left alone — this is additive, not a breaking
+change to any flow written before it existed.
+
+**Free-form Slack dispatch (`--dispatch`) shells out to `claude -p` on
+kman's own host, sandboxed to a pure text-in/JSON-out classification
+call — confirmed live, including the sandboxing.** `internal/dispatch`
+passes `--allowedTools "" --strict-mcp-config` (no tools, no MCP servers
+at all) plus `--json-schema` (a `{flow,repo,task,clarify}` object) and
+`--output-format json`. This was not assumed safe: a first live test
+*without* `--allowedTools ""` (only `--restricted`) had Claude actually
+attempt to `Write` a file on the host machine in response to an
+actionable-sounding message ("add a TEST.md file...") — blocked by the
+permission system, but only after a 30s, $0.08, 6-turn detour, and a
+useless routing answer. With `--allowedTools ""` the same message
+completes in ~10s for ~$0.03-0.07 (haiku, the default — `--dispatch-model`
+overrides it) with zero tool-use attempts, because there is no tool to
+attempt. A completely empty (unset) `--allowedTools` value is what
+disables tools entirely; `--restricted` alone is not enough for a
+call this unsandboxed-by-default.
+
+**Candidate flows offered to dispatch are pre-filtered by `CanTrigger`,
+never the full flow list.** `Handler.candidateFlows` iterates
+`config.ListFlowNames` and keeps only what `cfg.Access.CanTrigger(userID,
+name)` already allows, before any of it reaches the `claude -p` prompt —
+dispatch can never route a user into a flow they weren't already granted,
+and `handle()` still re-checks `CanTrigger` after dispatch returns a
+concrete flow name as defense in depth. Repos are not access-controlled
+the same way; `config.ListRepos` offers the entire registry to every
+dispatch call, on the reasoning that the actual write authority is
+Bitbucket's own credential scoping, not a second ACL inside kman.
+
+**`ParseCommand`'s "run <flow>" detection is shared with the dispatch
+path via two unexported helpers (`strippedText`, `parseExplicitRun`),
+not duplicated.** `ParseCommand` itself is unchanged in observable
+behavior (same tests, same signature) — it's now built on top of the
+same two functions `Handler.route` calls directly, so an explicit
+`run <flow>` always wins over dispatch without a second, drifting copy
+of that parsing logic.

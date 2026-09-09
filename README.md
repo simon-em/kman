@@ -43,12 +43,15 @@ kman group set <name>
 kman group add-member <group> <user-id>
 kman group remove-member <group> <user-id>
 kman group ls
+kman repo set <name> <url>              # a named source repo flows/dispatch can target by name
+kman repo ls
+kman repo rm <name>
 kman grant <user/ID|group/NAME> <flow>
 kman revoke <user/ID|group/NAME> <flow>
 kman web [--addr 127.0.0.1:8080]        # a browser UI over flows/users/groups/cron/integrations; every save is a git commit
 kman integration bitbucket status [user-id...]
 kman integration slack status
-kman slack serve [--addr 0.0.0.0:8081] --kranq-url <url> [--meta-url <url>] [--default-flow <name>]   # the Slack events endpoint; separate from kman web on purpose
+kman slack serve [--addr 0.0.0.0:8081] --kranq-url <url> [--meta-url <url>] [--default-flow <name>] [--dispatch] [--dispatch-model <name>]   # the Slack events endpoint; separate from kman web on purpose
 kman meta serve [--addr 0.0.0.0:8082]   # the scoped callback endpoint a pushed VM calls through; separate listener again
 kman cron set <name> --flow <flow> --schedule "<cron-expr>" [NAME=VALUE...]
 kman cron ls
@@ -111,21 +114,54 @@ kman grant user/simon deploy-review
 
 Mentioning the bot with `@kman run deploy-review ENV=staging` in a channel
 runs the flow as `simon`, if `simon` (or one of their groups) has been
-granted it, and replies in-thread with the result. A mention that isn't
-`run <flow>` falls back to a default flow instead (`--default-flow`,
-defaults to `create-feature`) with the whole message text passed as that
-flow's `TASK` argument, so `@kman add a TEST.md file to kman-demo` works
-without knowing any flow name at all, as long as `simon` is granted
-`create-feature` too. A flow written for this needs to read its own
+granted it, and replies in-thread with the result. A flow's `repo:` is
+only its *default* source; `run deploy-review REPO=dx ENV=staging` (or a
+flow that declares `args: REPO:` itself) overrides it, resolved as a name
+from `kman repo ls` or a full URL directly.
+
+A mention that isn't `run <flow>` needs routing to a flow (and, since a
+flow no longer always implies one fixed repo, a target repo too). Two
+ways to do that:
+
+- `--default-flow <name>` (default `create-feature`): the whole message
+  becomes that one flow's `TASK` argument, no routing decision made.
+- `--dispatch`: a real routing step. kman runs `claude -p` on its own
+  host (sandboxed: no tools, no filesystem, no MCP — `--allowedTools ""
+  --strict-mcp-config`, a pure text-in/JSON-out classification call, not
+  an agent) with the free text plus the *requesting user's own granted
+  flows* (each flow's `description:` field) and `kman repo ls` as
+  candidates, and it returns which flow, which repo, and the task text
+  with routing phrases like "on dx" stripped out. If it can't tell,
+  it replies with a clarifying question instead of guessing. `--dispatch`
+  takes priority over `--default-flow` when both are set. Confirmed live
+  end to end: a real Slack message with no flow name and no repo URL,
+  routed through a real `claude -p` call, landed a real PR. Each dispatch
+  call is real, billed Claude usage (haiku by default, ~$0.03-0.07 and
+  5-15s per message once its prompt cache warms up) — `--dispatch-model`
+  overrides the model. Requires `claude` on `kman slack serve`'s own PATH,
+  logged in or with `CLAUDE_CODE_OAUTH_TOKEN` set in its environment.
+
+Either way, a flow written for a routed message needs to read its own
 `TASK` value at runtime (`` `echo "$TASK"` `` inside its own `claude:`
 step), not reference `$TASK` in the prompt text itself, kranq compiles a
-`claude:` prompt into a shell heredoc that doesn't expand variables.
+`claude:` prompt into a shell heredoc that doesn't expand variables. A
+flow meant to work across repos should avoid hardcoding
+`BITBUCKET_WORKSPACE`/`BITBUCKET_REPO_SLUG` in its own `env:` — kman
+derives both automatically from whichever repo was actually targeted,
+whenever the flow doesn't set them itself.
 
-If a flow's `repo:` is a *private* `bitbucket.org` URL, kman mints its
-own short-lived, read-only credential to clone it (separate from
-whatever the flow's own `credentials:` declares for use inside the VM,
-that's a different, narrower, host-side-only concern) — nothing to
-configure beyond having Bitbucket set up already.
+```sh
+kman repo set dx https://bitbucket.org/effetmonstre/dx.git
+kman repo ls
+kman repo rm dx
+```
+
+If a flow's resolved repo (its own `repo:`, or a `REPO=`/dispatch
+override) is a *private* `bitbucket.org` URL, kman mints its own
+short-lived, read-only credential to clone it (separate from whatever the
+flow's own `credentials:` declares for use inside the VM, that's a
+different, narrower, host-side-only concern) — nothing to configure
+beyond having Bitbucket set up already.
 
 A flow that wants a
 headless Claude step to be able to ask a human something mid-run declares

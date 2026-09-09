@@ -10,6 +10,7 @@ import (
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/reporegistry"
 	"gopkg.in/yaml.v3"
 )
 
@@ -49,6 +50,30 @@ func LoadCronEntry(home, name string) (cron.Entry, error) {
 	return cron.ParseEntry(data)
 }
 
+func LoadRepo(home, name string) (reporegistry.Repo, error) {
+	data, err := os.ReadFile(repoPath(home, name))
+	if err != nil {
+		return reporegistry.Repo{}, err
+	}
+	return reporegistry.ParseRepo(data)
+}
+
+func ListRepos(home string) ([]reporegistry.Repo, error) {
+	names, err := ListRepoNames(home)
+	if err != nil {
+		return nil, err
+	}
+	repos := make([]reporegistry.Repo, 0, len(names))
+	for _, name := range names {
+		r, err := LoadRepo(home, name)
+		if err != nil {
+			return nil, err
+		}
+		repos = append(repos, r)
+	}
+	return repos, nil
+}
+
 func SaveFlow(home string, spec flow.Spec, author string) error {
 	if err := writeYAML(flowPath(home, spec.Name), spec); err != nil {
 		return err
@@ -84,6 +109,20 @@ func RemoveCronEntry(home, name, author string) error {
 	return commit(Dir(home), fmt.Sprintf("cron %s: removed", name), author)
 }
 
+func SaveRepo(home string, r reporegistry.Repo, author string) error {
+	if err := writeYAML(repoPath(home, r.Name), r); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("repo %s: saved", r.Name), author)
+}
+
+func RemoveRepo(home, name, author string) error {
+	if err := os.Remove(repoPath(home, name)); err != nil {
+		return err
+	}
+	return commit(Dir(home), fmt.Sprintf("repo %s: removed", name), author)
+}
+
 func ListFlowNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "flows"))
 }
@@ -100,6 +139,10 @@ func ListCronNames(home string) ([]string, error) {
 	return listYAMLBasenames(filepath.Join(Dir(home), "cron"))
 }
 
+func ListRepoNames(home string) ([]string, error) {
+	return listYAMLBasenames(filepath.Join(Dir(home), "repos"))
+}
+
 func flowPath(home, name string) string {
 	return filepath.Join(Dir(home), "flows", name+".yaml")
 }
@@ -114,6 +157,10 @@ func groupPath(home, name string) string {
 
 func cronPath(home, name string) string {
 	return filepath.Join(Dir(home), "cron", name+".yaml")
+}
+
+func repoPath(home, name string) string {
+	return filepath.Join(Dir(home), "repos", name+".yaml")
 }
 
 func listYAMLBasenames(dir string) ([]string, error) {

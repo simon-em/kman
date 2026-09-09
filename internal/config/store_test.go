@@ -9,6 +9,7 @@ import (
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/cron"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/reporegistry"
 )
 
 func gitLog(t *testing.T, dir string) string {
@@ -105,6 +106,52 @@ func TestRemoveCronEntry(t *testing.T) {
 	}
 	if _, err := LoadCronEntry(home, "nightly"); !os.IsNotExist(err) {
 		t.Errorf("LoadCronEntry after remove: %v, want IsNotExist", err)
+	}
+}
+
+func TestSaveRepoRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	r := reporegistry.Repo{Name: "dx", URL: "https://bitbucket.org/smntlbt/dx.git"}
+	if err := SaveRepo(home, r, ""); err != nil {
+		t.Fatalf("SaveRepo: %v", err)
+	}
+	got, err := LoadRepo(home, "dx")
+	if err != nil {
+		t.Fatalf("LoadRepo: %v", err)
+	}
+	if got.URL != "https://bitbucket.org/smntlbt/dx.git" {
+		t.Errorf("URL = %q", got.URL)
+	}
+}
+
+func TestRemoveRepo(t *testing.T) {
+	home := t.TempDir()
+	r := reporegistry.Repo{Name: "dx", URL: "https://bitbucket.org/smntlbt/dx.git"}
+	if err := SaveRepo(home, r, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveRepo(home, "dx", ""); err != nil {
+		t.Fatalf("RemoveRepo: %v", err)
+	}
+	if _, err := LoadRepo(home, "dx"); !os.IsNotExist(err) {
+		t.Errorf("LoadRepo after remove: %v, want IsNotExist", err)
+	}
+}
+
+func TestListRepos(t *testing.T) {
+	home := t.TempDir()
+	if err := SaveRepo(home, reporegistry.Repo{Name: "dx", URL: "https://bitbucket.org/smntlbt/dx.git"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveRepo(home, reporegistry.Repo{Name: "kman-demo", URL: "https://bitbucket.org/smntlbt/kman-demo.git"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	repos, err := ListRepos(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repos) != 2 || repos[0].Name != "dx" || repos[1].Name != "kman-demo" {
+		t.Errorf("repos = %+v, want sorted [dx kman-demo]", repos)
 	}
 }
 

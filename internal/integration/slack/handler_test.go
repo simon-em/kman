@@ -18,6 +18,7 @@ import (
 	"github.com/simon-em/kman/internal/access"
 	"github.com/simon-em/kman/internal/config"
 	"github.com/simon-em/kman/internal/flow"
+	"github.com/simon-em/kman/internal/reporegistry"
 	"github.com/simon-em/kman/internal/vault"
 )
 
@@ -322,6 +323,180 @@ func TestHandlerRefusesAFlowTheUserIsNotGrantedFor(t *testing.T) {
 	waitFor(t, 5*time.Second, func() bool {
 		for _, m := range fakeSlack.snapshot() {
 			if strings.Contains(m, "not authorized") {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+func newFakeClaude(t *testing.T, response string) string {
+	t.Helper()
+	binDir := t.TempDir()
+	logFile := filepath.Join(t.TempDir(), "claude-args.log")
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do printf 'ARG>>>%s<<<\\n' \"$a\" >> \"$FAKE_CLAUDE_LOG\"; done\n" +
+		"printf '%s' \"$FAKE_CLAUDE_RESPONSE\"\n"
+	if err := os.WriteFile(filepath.Join(binDir, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_CLAUDE_LOG", logFile)
+	t.Setenv("FAKE_CLAUDE_RESPONSE", response)
+	return logFile
+}
+
+func TestHandlerRoutesFreeFormTextViaDispatch(t *testing.T) {
+	home := t.TempDir()
+	slackSrv, fakeSlack := newFakeSlackServer(t)
+	secret := configureSlack(t, home, slackSrv.URL)
+	newFakeClaude(t, `{"is_error":false,"result":"{}","structured_output":{"flow":"create-feature","repo":"dx","task":"add a TEST.md file","clarify":""}}`)
+
+	repoFile := filepath.Join(t.TempDir(), "captured_repo.txt")
+	taskFile := filepath.Join(t.TempDir(), "captured_task.txt")
+	remote := newRemoteWithCommit(t)
+	kranq := newBareKranqRepoWithHook(t, fmt.Sprintf(`
+count="${GIT_PUSH_OPTION_COUNT:-0}"
+i=0
+while [ "$i" -lt "$count" ]; do
+  eval "val=\$GIT_PUSH_OPTION_$i"
+  case "$val" in
+    repo=*) echo "${val#repo=}" > %s ;;
+    env.TASK=*) echo "${val#env.TASK=}" > %s ;;
+  esac
+  i=$((i+1))
+done
+echo "KRANQ-RESULT id=dispatch-test status=ok exit=0"
+`, repoFile, taskFile))
+
+	spec := flow.Spec{
+		Name:        "create-feature",
+		Description: "opens a small PR making a requested change",
+		Args:        map[string]flow.Arg{"TASK": {Required: true}},
+		Steps:       []flow.Step{{Name: "a", Run: "echo hi"}},
+	}
+	if err := config.SaveFlow(home, spec, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveRepo(home, reporegistry.Repo{Name: "dx", URL: remote}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	user := access.User{ID: "simon", SlackUserID: "U123", Flows: []string{"create-feature"}}
+	if err := config.SaveUser(home, user, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(home, kranq, "", "")
+	h.Dispatch = true
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	event := `{"type":"event_callback","event":{"type":"app_mention","channel":"C1","user":"U123","text":"<@UBOT> add a TEST.md file to dx","ts":"1.1"}}`
+	resp, err := http.DefaultClient.Do(signedRequest(t, srv.URL, secret, []byte(event)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	waitFor(t, 5*time.Second, func() bool {
+		for _, m := range fakeSlack.snapshot() {
+			if strings.Contains(m, "create-feature") && strings.Contains(m, "status=ok") {
+				return true
+			}
+		}
+		return false
+	})
+
+	if got, _ := os.ReadFile(repoFile); strings.TrimSpace(string(got)) != remote {
+		t.Errorf("repo option = %q, want the dispatch-resolved repo %q", got, remote)
+	}
+	if got, _ := os.ReadFile(taskFile); strings.TrimSpace(string(got)) != "add a TEST.md file" {
+		t.Errorf("TASK = %q", got)
+	}
+}
+
+func TestHandlerDispatchOnlyOffersFlowsTheUserIsGrantedFor(t *testing.T) {
+	home := t.TempDir()
+	slackSrv, fakeSlack := newFakeSlackServer(t)
+	secret := configureSlack(t, home, slackSrv.URL)
+	logFile := newFakeClaude(t, `{"is_error":false,"result":"{}","structured_output":{"flow":"","repo":"","task":"","clarify":"no match"}}`)
+
+	granted := flow.Spec{Name: "create-feature", Description: "opens a small PR", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}
+	notGranted := flow.Spec{Name: "delete-everything", Description: "a dangerous flow simon is not granted", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}
+	if err := config.SaveFlow(home, granted, "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveFlow(home, notGranted, "test"); err != nil {
+		t.Fatal(err)
+	}
+	user := access.User{ID: "simon", SlackUserID: "U123", Flows: []string{"create-feature"}}
+	if err := config.SaveUser(home, user, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(home, "unused", "", "")
+	h.Dispatch = true
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	event := `{"type":"event_callback","event":{"type":"app_mention","channel":"C1","user":"U123","text":"<@UBOT> do something","ts":"1.1"}}`
+	resp, err := http.DefaultClient.Do(signedRequest(t, srv.URL, secret, []byte(event)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	waitFor(t, 5*time.Second, func() bool {
+		for _, m := range fakeSlack.snapshot() {
+			if strings.Contains(m, "no match") {
+				return true
+			}
+		}
+		return false
+	})
+
+	logged, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("fake claude was never invoked: %v", err)
+	}
+	if strings.Contains(string(logged), "delete-everything") {
+		t.Errorf("logged args = %q, want the ungranted flow never offered as a candidate", logged)
+	}
+	if !strings.Contains(string(logged), "create-feature") {
+		t.Errorf("logged args = %q, want the granted flow offered as a candidate", logged)
+	}
+}
+
+func TestHandlerDispatchClarifiesWithoutPushingWhenAmbiguous(t *testing.T) {
+	home := t.TempDir()
+	slackSrv, fakeSlack := newFakeSlackServer(t)
+	secret := configureSlack(t, home, slackSrv.URL)
+	newFakeClaude(t, `{"is_error":false,"result":"{}","structured_output":{"flow":"","repo":"","task":"","clarify":"which repo did you mean?"}}`)
+
+	spec := flow.Spec{Name: "create-feature", Description: "opens a small PR", Steps: []flow.Step{{Name: "a", Run: "echo hi"}}}
+	if err := config.SaveFlow(home, spec, "test"); err != nil {
+		t.Fatal(err)
+	}
+	user := access.User{ID: "simon", SlackUserID: "U123", Flows: []string{"create-feature"}}
+	if err := config.SaveUser(home, user, "test"); err != nil {
+		t.Fatal(err)
+	}
+
+	h := NewHandler(home, "should-never-be-used", "", "")
+	h.Dispatch = true
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+
+	event := `{"type":"event_callback","event":{"type":"app_mention","channel":"C1","user":"U123","text":"<@UBOT> do the thing","ts":"1.1"}}`
+	resp, err := http.DefaultClient.Do(signedRequest(t, srv.URL, secret, []byte(event)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	waitFor(t, 5*time.Second, func() bool {
+		for _, m := range fakeSlack.snapshot() {
+			if strings.Contains(m, "which repo did you mean?") {
 				return true
 			}
 		}

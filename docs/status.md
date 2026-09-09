@@ -751,6 +751,72 @@ that flow's `TASK` argument.
   pushing through to a (still-fake, no real kranq host available)
   downstream.
 
+### Multi-repo flows and free-form dispatch (not in the original phased plan)
+
+Two real gaps surfaced by actually using the free-form Slack routing built
+in Phase 7/9: a flow could only ever target the one repo baked into its
+own `repo:` field, and free-form text could only ever fall back to one
+fixed `--default-flow` — no real routing existed. Both fixed:
+
+- **`internal/reporegistry`** (`kman repo set|ls|rm`): a named-repo
+  registry, separate from any flow. `trigger.ResolveRepoRef` resolves a
+  `REPO=` argument — explicit (`run <flow> REPO=name`) or dispatch-picked
+  — against it, or passes an already-remote URL through untouched. `kman
+  push`'s own `--source` deliberately does not get this resolution (see
+  the CLAUDE.md fact); it already accepts any URL directly and defaults
+  to the current directory, and applying alias lookup there would make
+  `.` an ambiguous case.
+- **`flow.Spec.Description`**: an optional field with no effect on
+  rendering or validation, used only as a human/dispatch-facing summary.
+- **`internal/dispatch`**: a real routing step, `claude -p` run on kman's
+  own host and sandboxed to pure classification (`--allowedTools ""
+  --strict-mcp-config`, `--json-schema`). Enabled via `kman slack serve
+  --dispatch` (replacing, not stacking with, `--default-flow`). Candidate
+  flows are pre-filtered by `CanTrigger` before they ever reach the
+  prompt; candidate repos are the full `kman repo ls` registry.
+- **`trigger.autoRepoEnv`**: `BITBUCKET_WORKSPACE`/`BITBUCKET_REPO_SLUG`
+  auto-derived from whichever repo actually gets used, when the flow
+  itself doesn't set them — `create-feature.yaml` dropped its hardcoded
+  `env:` block once this landed, since hardcoding them became a real
+  correctness bug (a PR opened against the wrong repo) rather than mere
+  redundancy the moment the same flow could target more than one repo.
+- **The `-o repo=` push option now reflects the resolved source, not the
+  flow's static `repo:`** — see the CLAUDE.md fact; this was a real,
+  previously-undetectable-because-untested correctness gap (every flow
+  only ever had one repo before, so it never showed up).
+
+Proven live, end to end, no fakes: a real `@Kman <free text naming a
+repo, no "run" and no flow name>` Slack message, routed by a real
+`claude -p` call to `create-feature` and `kman-demo`, correctly stripping
+the routing phrase from the task text, landing a real PR
+(`smntlbt/kman-demo` pull request #4). A prior, safer-flag-free version
+of the same call is what surfaced the sandboxing gap fixed before this
+(see the CLAUDE.md fact on `--allowedTools ""`) — worth remembering as a
+reason this kind of host-side LLM call needs its safety flags verified
+live, not assumed from the flag names alone.
+
+Worth flagging, before it's forgotten:
+- **Dispatch adds real, billed latency and cost to every free-form
+  message, on top of the VM run itself.** ~5-15s and ~$0.03-0.07 per
+  message once the prompt cache warms up (haiku, the default). The
+  existing "no rate limiting on the free-form fallback" caveat below
+  gets more expensive per accidental trigger, not less, with dispatch on.
+- **`kman slack serve --dispatch` needs `claude` on its own PATH,
+  authenticated (logged in, or `CLAUDE_CODE_OAUTH_TOKEN` in its
+  environment) — a new operational requirement this phase adds**, beyond
+  what a bare `kman slack serve --default-flow` needed. Undocumented
+  before this; now in CLAUDE.md and the README.
+- **Repos are not access-controlled.** Every registered repo is offered
+  to every dispatch call regardless of who's asking; the actual write
+  authority is Bitbucket's own credential scoping (a user's linked
+  OAuth identity, or the app-level scoped token), not a second ACL
+  inside kman. Worth a real decision if that stops being sufficient.
+- **`ac-spike` (a real, non-scratch repo in the same Bitbucket workspace)
+  was registered for realism but never actually pushed to** — the live
+  proof above deliberately stuck to `kman-demo`, the purpose-built
+  scratch target, rather than writing into a repo whose real content and
+  purpose weren't confirmed first.
+
 ## Left to do
 
 Everything from Phase 10 onward in [docs/design.md](design.md):
